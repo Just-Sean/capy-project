@@ -1,0 +1,45 @@
+[project]
+name = "{{ project_slug }}"
+version = "0.1.0"
+description = "{{ project_name }}"
+requires-python = ">=3.14"
+dependencies = [
+    "django>=6.1.3,<6.2",          # the web framework
+    "psycopg[binary]>=3.3",        # PostgreSQL driver
+    "django-environ>=0.14",        # reads settings from environment variables and .env
+    "gunicorn>=26",                # production web server
+    "whitenoise>=6.12",            # serves static files (the admin's CSS/JS) in production
+]
+
+[dependency-groups]
+# Installed by `uv sync` on your machine, never in the production image.
+dev = [
+    "pytest>=9",
+    "pytest-django>=4.14",
+    "ruff>=0.17",
+]
+
+[tool.uv]
+package = false                    # an application, not a library to publish
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings"
+addopts = "--strict-markers"
+python_files = ["tests.py", "test_*.py"]   # Django-style tests.py plus tests/test_*.py
+# Fail on Django deprecation warnings, so upgrades never surprise you.
+filterwarnings = ["error::DeprecationWarning:django.*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["*/migrations/*"]
+
+[tool.ruff.lint]
+# E/W/F: errors and style, I: import order, B: likely bugs, S: security,
+# DJ: Django-specific rules, UP: modern Python syntax
+select = ["E", "W", "F", "I", "B", "S", "DJ", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests may use assert, dummy passwords and subprocess.
+"**/tests*.py" = ["S101", "S105", "S106", "S603"]
+"tests/*.py" = ["S101", "S105", "S106", "S603"]

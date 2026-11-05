@@ -1,0 +1,71 @@
+# {{ project_name }}
+
+A Django 6.1 project on PostgreSQL 18, made from the django-starter template.
+
+## First-time setup
+
+You need [uv](https://docs.astral.sh/uv/) and Docker.
+
+```bash
+cp .env.example .env              # then put a real value in DJANGO_SECRET_KEY
+uv sync                           # installs Python 3.14 and the packages, creates uv.lock
+docker compose up -d db           # starts Postgres in Docker
+uv run python manage.py migrate
+uv run python manage.py createsuperuser
+uv run python manage.py runserver
+```
+
+Then open http://localhost:8000/admin/ and log in.
+
+Commit `uv.lock` after the first `uv sync`: it pins every package version so
+everyone, and the production image, installs exactly the same thing.
+
+## Everyday commands
+
+| Command | What it does |
+| --- | --- |
+| `docker compose up -d db` / `docker compose stop` | Start / stop Postgres |
+| `uv run python manage.py runserver` | Development server with auto-reload |
+| `uv run python manage.py makemigrations` / `migrate` | Create / apply database changes |
+| `uv run pytest` | Run the tests |
+| `uv run ruff check .` / `uv run ruff format .` | Check for problems / format the code |
+| `uv add <package>` | Add a dependency (updates pyproject.toml and uv.lock) |
+| `docker compose --profile prod up --build` | Build and run the production image at http://localhost:8000/staff/ |
+| `copier update` | Pull in improvements from the starter template |
+
+## Environments
+
+There is one settings file, `config/settings.py`. Environment variables decide
+how it behaves, and anything unset falls back to the secure production value.
+
+| Environment | Runs with | Settings come from |
+| --- | --- | --- |
+| Development | `runserver` on your machine | `.env` (debug on, plain HTTP allowed) |
+| Test | `pytest` | `.env`, plus Django's automatic throwaway test database |
+| Production | The Docker image | Real environment variables on the server, never a file |
+
+Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
+`DJANGO_ADMIN_URL` or `DATABASE_URL` is missing, or if the admin URL is left
+as `admin/`. `.env.example` lists and explains every variable.
+
+## What's in the project
+
+| Path | Purpose |
+| --- | --- |
+| `config/settings.py` | All settings, read from the environment |
+| `config/urls.py` | The root URL map; each app adds its URLs here |
+| `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
+| `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
+| `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
+| `conftest.py` | Test-only speedups (fast password hashing) |
+| `Dockerfile` | The production image: uv, non-root user, Gunicorn |
+| `compose.yaml` | Postgres for development; the `prod` profile runs the image |
+| `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff) |
+| `.env.example` | Every environment variable, documented |
+| `.copier-answers.yml` | Lets `copier update` find the template; don't edit |
+
+## Conventions
+
+- Each app keeps its own templates in `<app>/templates/<app>/`; there is no root templates folder.
+- Models expose `public_id` (a UUID) in URLs and APIs, never the database `id`.
+- Business logic lives in plain functions (`services.py`, `selectors.py`) that views and APIs share.

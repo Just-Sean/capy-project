@@ -1,0 +1,21 @@
+# Copier template: make a new project with
+#   copier copy gh:<you>/django-starter my-client-app
+# and later pull in starter improvements from inside the project with
+#   copier update
+
+_min_copier_version: "9.4"
+_subdirectory: template      # only files under template/ are copied into projects
+
+project_name:
+  type: str
+  help: Human-readable project name
+  default: My Project
+
+project_slug:
+  type: str
+  help: Lowercase identifier, used for the package and database name
+  default: "{{ project_name | lower | replace(' ', '_') | replace('-', '_') }}"
+  validator: >-
+    {% if not (project_slug | regex_search('^[a-z][a-z0-9_]*$')) %}
+    Use lowercase letters, digits and underscores, starting with a letter.
+    {% endif %}

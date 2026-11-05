@@ -1,0 +1,10 @@
+# Keep the image small and never copy secrets into it.
+.git
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.env
+staticfiles
+media
+tests
