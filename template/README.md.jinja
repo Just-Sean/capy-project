@@ -115,6 +115,11 @@ Stop:
 docker compose --profile prod down            # stop and remove the containers (data is kept)
 ```
 
+<http://localhost:8000/healthz> returns `ok`. It never touches the database and
+answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balancers
+(which call it by IP) can poll it. Gunicorn's worker count comes from
+`WEB_CONCURRENCY` (default 1); on a server set it to about 2 x CPU cores + 1.
+
 Check it: <http://localhost:8000/admin/> should give a plain "Not Found" with no
 debug details. To see production refuse bad config without Docker:
 
@@ -138,8 +143,10 @@ docker compose down -v                # also DELETE the database volume: all dat
 | --- | --- |
 | `config/settings.py` | All settings, read from the environment |
 | `config/urls.py` | The root URL map; each app adds its URLs here |
+| `config/middleware.py` | Answers `/healthz` before anything else runs |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
+| `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `compose.yaml` | Postgres for development; the `prod` profile runs the image |

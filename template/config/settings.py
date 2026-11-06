@@ -72,6 +72,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "config.middleware.healthz",  # first: answers /healthz before host checks or the database
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # static files, right after security
     "django.contrib.sessions.middleware.SessionMiddleware",

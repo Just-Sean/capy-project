@@ -4,7 +4,7 @@
 
 # ---- Stage 1: install dependencies with uv -----------------------------------
 FROM python:3.14-slim-trixie AS build
-COPY --from=ghcr.io/astral-sh/uv:0.11 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
@@ -38,4 +38,12 @@ RUN mkdir -p /app/media && chown app:app /app/media
 
 USER app
 EXPOSE 8000
-CMD ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8000", "--workers", "3", "--access-logfile", "-"]
+
+# Docker marks the container unhealthy if /healthz stops answering. Python's
+# urllib does the request because curl isn't in the slim image.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+
+# Gunicorn reads the worker count from WEB_CONCURRENCY (default 1). Set it on the
+# server, typically to 2 x CPU cores + 1.
+CMD ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8000", "--access-logfile", "-"]
