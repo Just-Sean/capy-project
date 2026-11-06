@@ -28,6 +28,3 @@ copier update
 
 Copier re-applies the starter's changes and asks about any conflicts.
 Tag starter releases (`git tag v0.2.0`) so projects update to a known version.
-# django-starter
-# django-starter
-# django-starter
