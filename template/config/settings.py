@@ -1,12 +1,19 @@
 """Settings for every environment.
 
-One file, secure by default. The environment decides the rest:
-  - development: values from the .env file (see .env.example)
-  - test:        pytest, using the same .env (Django adds a throwaway test database)
-  - production:  real environment variables on the server; no .env file exists
+One file. DJANGO_ENV picks the environment, and the environment picks the defaults:
+  - development: runserver on your machine, from the .env file (see .env.example).
+                 DEBUG on, plain HTTP, and built-in placeholder values for the
+                 secret key, allowed hosts and admin URL.
+  - test:        pytest (pyproject.toml sets DJANGO_ENV=test). DEBUG off, plain HTTP,
+                 the same placeholders, plus fast password hashing and no
+                 collectstatic needed. Django adds a throwaway test database.
+  - production:  the server, from real environment variables; no .env file exists.
+                 DEBUG off and refused, HTTPS-only, and DJANGO_SECRET_KEY,
+                 DJANGO_ALLOWED_HOSTS and DJANGO_ADMIN_URL are required.
 
-Anything unset falls back to the safe production value. Required values have no
-fallback, so a misconfigured server refuses to start instead of running insecurely.
+An unset DJANGO_ENV means production, so a misconfigured server refuses to start
+instead of running insecurely. Any individual setting can still be overridden by
+its own environment variable.
 """
 
 from pathlib import Path
@@ -23,16 +30,40 @@ if env.bool("DJANGO_READ_DOT_ENV", default=True) and (BASE_DIR / ".env").exists(
     env.read_env(BASE_DIR / ".env")
 
 
+# --- Environment ----------------------------------------------------------------
+
+ENVIRONMENTS = ("development", "test", "production")
+DJANGO_ENV = env("DJANGO_ENV", default="production")  # unset means production, the safest choice
+if DJANGO_ENV not in ENVIRONMENTS:
+    raise ImproperlyConfigured(
+        f"DJANGO_ENV must be one of {', '.join(ENVIRONMENTS)}; got {DJANGO_ENV!r}."
+    )
+
+IS_DEVELOPMENT = DJANGO_ENV == "development"
+IS_TEST = DJANGO_ENV == "test"
+IS_PRODUCTION = DJANGO_ENV == "production"
+
+
 # --- Core ---------------------------------------------------------------------
 
-DEBUG = env.bool("DJANGO_DEBUG", default=False)
-SECRET_KEY = env("DJANGO_SECRET_KEY")  # required
-ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS")  # required
-CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
+DEBUG = env.bool("DJANGO_DEBUG", default=IS_DEVELOPMENT)
+if IS_PRODUCTION and DEBUG:
+    raise ImproperlyConfigured("DJANGO_DEBUG must not be true in production.")
 
-ADMIN_URL = env("DJANGO_ADMIN_URL")  # required, e.g. "staff-k3v9q2/"
-if not DEBUG and ADMIN_URL == "admin/":
-    raise ImproperlyConfigured("Set DJANGO_ADMIN_URL to something other than 'admin/'.")
+if IS_PRODUCTION:
+    SECRET_KEY = env("DJANGO_SECRET_KEY")  # required
+    ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS")  # required
+    ADMIN_URL = env("DJANGO_ADMIN_URL")  # required, e.g. "staff-k3v9q2/"
+    if ADMIN_URL == "admin/":
+        raise ImproperlyConfigured("Set DJANGO_ADMIN_URL to something other than 'admin/'.")
+else:
+    SECRET_KEY = env("DJANGO_SECRET_KEY", default="insecure-key-for-development-and-tests-only")
+    ALLOWED_HOSTS = env.list(
+        "DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1", "[::1]", "testserver"]
+    )
+    ADMIN_URL = env("DJANGO_ADMIN_URL", default="admin/")
+
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 
 INSTALLED_APPS = [
     # Your apps first, so their templates override third-party ones.
@@ -122,15 +153,17 @@ STORAGES = {
 }
 
 
-# --- Security (secure unless the environment says otherwise) ----------------------
+# --- Security (HTTPS-only in production, plain HTTP allowed elsewhere) --------------
 
-SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=True)
-SESSION_COOKIE_SECURE = env.bool("DJANGO_SESSION_COOKIE_SECURE", default=True)
-CSRF_COOKIE_SECURE = env.bool("DJANGO_CSRF_COOKIE_SECURE", default=True)
+SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=IS_PRODUCTION)
+SESSION_COOKIE_SECURE = env.bool("DJANGO_SESSION_COOKIE_SECURE", default=IS_PRODUCTION)
+CSRF_COOKIE_SECURE = env.bool("DJANGO_CSRF_COOKIE_SECURE", default=IS_PRODUCTION)
 
 # HSTS tells browsers to only ever use HTTPS for this domain. On a brand-new
 # domain, start with DJANGO_SECURE_HSTS_SECONDS=3600 and raise it once HTTPS works.
-SECURE_HSTS_SECONDS = env.int("DJANGO_SECURE_HSTS_SECONDS", default=60 * 60 * 24 * 365)
+SECURE_HSTS_SECONDS = env.int(
+    "DJANGO_SECURE_HSTS_SECONDS", default=60 * 60 * 24 * 365 if IS_PRODUCTION else 0
+)
 SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS", default=True)
 SECURE_HSTS_PRELOAD = False  # preloading is hard to undo; opt in deliberately per project
 SILENCED_SYSTEM_CHECKS = ["security.W021"]  # the "HSTS preload is off" warning, by design
@@ -153,3 +186,12 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": env("DJANGO_LOG_LEVEL", default="INFO")},
 }
+
+
+# --- Test-only adjustments --------------------------------------------------------
+
+if IS_TEST:
+    # Hashing passwords properly is deliberately slow; tests don't need that.
+    PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+    # Serve static files without needing `collectstatic` first.
+    STORAGES["staticfiles"] = {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}

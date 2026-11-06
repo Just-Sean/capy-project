@@ -1,7 +1,8 @@
 """Production must be secure and must refuse to start when misconfigured.
 
 Each test runs manage.py in a separate process with a production-style
-environment (no .env file), exactly as a server would.
+environment (no .env file, no DJANGO_ENV, which means production), exactly as a
+server would. A few tests switch DJANGO_ENV to check the other environments.
 """
 
 import os
@@ -59,3 +60,34 @@ def test_refuses_default_admin_url():
     result = run_manage("check", DJANGO_ADMIN_URL="admin/")
     assert result.returncode != 0
     assert "DJANGO_ADMIN_URL" in result.stderr
+
+
+def test_refuses_debug_in_production():
+    result = run_manage("check", DJANGO_DEBUG="true")
+    assert result.returncode != 0
+    assert "DJANGO_DEBUG" in result.stderr
+
+
+def test_refuses_unknown_environment():
+    result = run_manage("check", DJANGO_ENV="prod")
+    assert result.returncode != 0
+    assert "DJANGO_ENV" in result.stderr
+
+
+def test_development_starts_with_only_a_database_url():
+    result = run_manage(
+        "shell",
+        "-c",
+        "from django.conf import settings; print(settings.DEBUG, settings.SECURE_SSL_REDIRECT)",
+        DJANGO_ENV="development",
+        DJANGO_SECRET_KEY=None,
+        DJANGO_ALLOWED_HOSTS=None,
+        DJANGO_ADMIN_URL=None,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "True False", result.stderr
+
+
+def test_pytest_runs_with_test_settings(settings):
+    assert settings.DJANGO_ENV == "test"
+    assert settings.DEBUG is False

@@ -16,6 +16,7 @@ dependencies = [
 dev = [
     "pytest>=9",
     "pytest-django>=4.14",
+    "pytest-env>=1.8",
     "ruff>=0.17",
 ]
 
@@ -25,6 +26,7 @@ package = false                    # an application, not a library to publish
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings"
 addopts = "--strict-markers"
+env = ["DJANGO_ENV=test"]                 # tests always run with the test settings (pytest-env)
 python_files = ["tests.py", "test_*.py"]   # Django-style tests.py plus tests/test_*.py
 # Fail on Django deprecation warnings, so upgrades never surprise you.
 filterwarnings = ["error::DeprecationWarning:django.*"]

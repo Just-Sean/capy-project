@@ -7,7 +7,7 @@ A Django 6.1 project on PostgreSQL 18, made from the django-starter template.
 You need [uv](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
-cp .env.example .env              # then put a real value in DJANGO_SECRET_KEY
+cp .env.example .env              # DJANGO_ENV=development is already set
 uv sync                           # installs Python 3.14 and the packages, creates uv.lock
 docker compose up -d db           # starts Postgres in Docker
 uv run python manage.py migrate
@@ -35,18 +35,15 @@ everyone, and the production image, installs exactly the same thing.
 
 ## Environments
 
-There is one settings file, `config/settings.py`. Environment variables decide
-how it behaves, and anything unset falls back to the secure production value.
+There is one settings file, `config/settings.py`. `DJANGO_ENV` picks the
+environment, and the environment picks the defaults. Any setting can still be
+overridden by its own environment variable (see `.env.example`).
 
-| Environment | Runs with | Settings come from |
+| `DJANGO_ENV` | Set by | Defaults |
 | --- | --- | --- |
-| Development | `runserver` on your machine | `.env` (debug on, plain HTTP allowed) |
-| Test | `pytest` | `.env`, plus Django's automatic throwaway test database |
-| Production | The Docker image | Real environment variables on the server, never a file |
-
-Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
-`DJANGO_ADMIN_URL` or `DATABASE_URL` is missing, or if the admin URL is left
-as `admin/`. `.env.example` lists and explains every variable.
+| `development` | `.env` (copied from `.env.example`) | Debug on, plain HTTP, placeholder secret key, local hosts, admin at `admin/` |
+| `test` | `pytest` (in `pyproject.toml`) | Debug off, plain HTTP, the same placeholders, fast password hashing |
+| `production` | The server, or unset | Debug off and refused, HTTPS-only; `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL` and `DATABASE_URL` required, admin URL can't be `admin/` |
 
 ## What's in the project
 
@@ -57,7 +54,6 @@ as `admin/`. `.env.example` lists and explains every variable.
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
-| `conftest.py` | Test-only speedups (fast password hashing) |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `compose.yaml` | Postgres for development; the `prod` profile runs the image |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff) |
