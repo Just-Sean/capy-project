@@ -1,19 +1,16 @@
 """Settings for every environment.
 
-One file. DJANGO_ENV picks the environment, and the environment picks the defaults:
-  - development: runserver on your machine, from the .env file (see .env.example).
-                 DEBUG on, plain HTTP, and built-in placeholder values for the
-                 secret key, allowed hosts and admin URL.
-  - test:        pytest (pyproject.toml sets DJANGO_ENV=test). DEBUG off, plain HTTP,
-                 the same placeholders, plus fast password hashing and no
-                 collectstatic needed. Django adds a throwaway test database.
-  - production:  the server, from real environment variables; no .env file exists.
-                 DEBUG off and refused, HTTPS-only, and DJANGO_SECRET_KEY,
-                 DJANGO_ALLOWED_HOSTS and DJANGO_ADMIN_URL are required.
+One file, secure by default. DJANGO_ENV picks the environment:
+  - development: set in your .env. Debug on, plain HTTP allowed, and safe local
+                 defaults for the secret key, allowed hosts and admin URL.
+  - test:        set automatically by pytest (pytest-env). Debug off, fast password
+                 hashing, plain static files storage. Django adds a throwaway test database.
+  - production:  the default when DJANGO_ENV is unset. Real environment variables on the
+                 server; no .env file exists. HTTPS-only, and debug can't be turned on.
 
-An unset DJANGO_ENV means production, so a misconfigured server refuses to start
-instead of running insecurely. Any individual setting can still be overridden by
-its own environment variable.
+Every setting can still be overridden by its own environment variable. In production,
+required values have no fallback, so a misconfigured server refuses to start instead of
+running insecurely.
 """
 
 from pathlib import Path
@@ -32,13 +29,11 @@ if env.bool("DJANGO_READ_DOT_ENV", default=True) and (BASE_DIR / ".env").exists(
 
 # --- Environment ----------------------------------------------------------------
 
-ENVIRONMENTS = ("development", "test", "production")
 DJANGO_ENV = env("DJANGO_ENV", default="production")  # unset means production, the safest choice
-if DJANGO_ENV not in ENVIRONMENTS:
+if DJANGO_ENV not in ("development", "test", "production"):
     raise ImproperlyConfigured(
-        f"DJANGO_ENV must be one of {', '.join(ENVIRONMENTS)}; got {DJANGO_ENV!r}."
+        f"DJANGO_ENV must be 'development', 'test' or 'production', not {DJANGO_ENV!r}."
     )
-
 IS_DEVELOPMENT = DJANGO_ENV == "development"
 IS_TEST = DJANGO_ENV == "test"
 IS_PRODUCTION = DJANGO_ENV == "production"
@@ -153,7 +148,7 @@ STORAGES = {
 }
 
 
-# --- Security (HTTPS-only in production, plain HTTP allowed elsewhere) --------------
+# --- Security (HTTPS-only in production, plain HTTP elsewhere) --------------------
 
 SECURE_SSL_REDIRECT = env.bool("DJANGO_SECURE_SSL_REDIRECT", default=IS_PRODUCTION)
 SESSION_COOKIE_SECURE = env.bool("DJANGO_SESSION_COOKIE_SECURE", default=IS_PRODUCTION)
@@ -188,7 +183,7 @@ LOGGING = {
 }
 
 
-# --- Test-only adjustments --------------------------------------------------------
+# --- Test-only adjustments ----------------------------------------------------------
 
 if IS_TEST:
     # Hashing passwords properly is deliberately slow; tests don't need that.

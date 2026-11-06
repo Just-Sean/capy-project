@@ -25,7 +25,7 @@ services:
     environment:
       DJANGO_ENV: production
       # A fixed placeholder, only for running the production image locally.
-      DJANGO_SECRET_KEY: local-production-check-only-not-a-real-secret-k7Qw2Zp9Lm4Xv8Rt3Nb6Hy1Jc5Fd0Gs
+      DJANGO_SECRET_KEY: local-production-check-only-not-a-real-secret-0123456789-abcdefghijklmnop
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
       DJANGO_ADMIN_URL: staff/
       DATABASE_URL: postgres://app:app@db:5432/{{ project_slug }}
