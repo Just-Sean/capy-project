@@ -191,3 +191,7 @@ if IS_TEST:
     PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
     # Serve static files without needing `collectstatic` first.
     STORAGES["staticfiles"] = {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}
+    # Serve static files straight from the apps during tests, like development,
+    # so WhiteNoise doesn't look for the collectstatic folder.
+    WHITENOISE_USE_FINDERS = True
+    WHITENOISE_AUTOREFRESH = True
