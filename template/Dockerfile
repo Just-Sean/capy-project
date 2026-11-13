@@ -44,6 +44,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
     CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
 
-# Gunicorn reads the worker count from WEB_CONCURRENCY (default 1). Set it on the
-# server, typically to 2 x CPU cores + 1.
-CMD ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8000", "--access-logfile", "-"]
+# Gunicorn's settings (workers, timeouts, logs) are in gunicorn.conf.py. Inside the
+# container it listens on all interfaces, so Docker can forward port 8000 to it.
+# compose.yaml's web service runs its own command with the same --bind: change both.
+CMD ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8000"]

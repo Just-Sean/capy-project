@@ -117,8 +117,19 @@ docker compose --profile prod down            # stop and remove the containers (
 
 <http://localhost:8000/healthz> returns `ok`. It never touches the database and
 answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balancers
-(which call it by IP) can poll it. Gunicorn's worker count comes from
-`WEB_CONCURRENCY` (default 1); on a server set it to about 2 x CPU cores + 1.
+(which call it by IP) can poll it.
+
+**Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
+
+- **Workers:** set `WEB_CONCURRENCY` in the app's environment, about 2 x CPU cores + 1
+  (default 1). For example under `environment:` in a compose file, or `Environment=`
+  in a systemd service.
+- **Timeouts and worker recycling:** edit `gunicorn.conf.py`.
+- **Where it listens:** in Docker, on port 8000 of the container (set by the
+  Dockerfile and `compose.yaml`). Run directly on a Linux server, only on
+  127.0.0.1:8000, so a reverse proxy on the same machine (e.g. Caddy or nginx) must
+  forward requests to it. Start it from the project folder (or pass
+  `-c gunicorn.conf.py`), or it silently ignores its settings file.
 
 Check it: <http://localhost:8000/admin/> should give a plain "Not Found" with no
 debug details. To see production refuse bad config without Docker:
@@ -148,7 +159,9 @@ docker compose down -v                # also DELETE the database volume: all dat
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
+| `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
+| `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
 | `compose.yaml` | Postgres for development; the `prod` profile runs the image |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff) |
 | `.env.example` | Every environment variable, documented |
