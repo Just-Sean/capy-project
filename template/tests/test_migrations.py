@@ -12,6 +12,6 @@ def test_migrations_are_up_to_date():
     # reach the database, in development or in production.
     output = StringIO()
     try:
-        call_command("makemigrations", "--check", "--dry-run", stdout=output)
+        call_command("makemigrations", "--check", stdout=output)  # --check never writes files
     except SystemExit:
         pytest.fail(f"A model changed without a migration:\n{output.getvalue()}")

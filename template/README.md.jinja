@@ -7,8 +7,11 @@ A Django 6.1 project on PostgreSQL 18, made from the django-starter template.
 You need [uv](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
+git init                          # a new project isn't a git repo yet
 cp .env.example .env              # sets DJANGO_ENV=development
 uv sync                           # installs Python 3.14 and the packages, creates uv.lock
+uv run pre-commit install         # turns on the checks that run on every commit (see Checks)
+git add -A && git commit -m "Start from django-starter"   # the first commit (slow once: see Checks)
 docker compose up -d db           # starts Postgres in Docker
 uv run python manage.py migrate
 uv run python manage.py createsuperuser
@@ -17,14 +20,8 @@ uv run python manage.py runserver
 
 Then open http://localhost:8000/admin/ and log in.
 
-Then turn on the checks that run on every commit (see [Checks](#checks)):
-
-```bash
-uv run pre-commit install
-```
-
-Commit `uv.lock` after the first `uv sync`: it pins every package version so
-everyone, and the production image, installs exactly the same thing.
+The first commit includes `uv.lock`: it pins every package version so everyone, and
+the production image, installs exactly the same thing. Commit it whenever it changes.
 
 ## Everyday commands
 
@@ -36,6 +33,7 @@ everyone, and the production image, installs exactly the same thing.
 | `uv run pytest` | Run the tests |
 | `uv run pytest --cov` | Run the tests and measure coverage (fails below 80%) |
 | `uv run pre-commit run --all-files` | Run the commit checks (ruff) on every file |
+| pip-audit | Check the packages for known vulnerabilities: see [Before every pull request](#before-every-pull-request) |
 | `uv run ruff check .` / `uv run ruff format .` | Check for problems / format the code |
 | `uv add <package>` | Add a dependency (updates pyproject.toml and uv.lock) |
 | `docker compose --profile prod up --build` | Build and run the production image at http://localhost:8000/staff/ |
@@ -167,15 +165,18 @@ one fails:
 - **ruff check** and **ruff format --check**: lint and formatting, with the
   project's own ruff.
 
-Set it up once in each clone, after `uv sync`:
+Set it up once in each clone, after `uv sync` (the project must be a git repo):
 
 ```bash
 uv run pre-commit install          # runs the checks on every commit from now on
 uv run pre-commit run --all-files  # runs ruff on every file, any time
 ```
 
-gitleaks only looks at what's staged for a commit, so `--all-files` doesn't scan
-anything for secrets. To scan **every file** or the **whole git history**, use
+The first commit after `pre-commit install` is slow and needs the internet:
+pre-commit downloads and builds gitleaks once, then reuses it.
+
+gitleaks only looks at what's staged for a commit, so under `--all-files` it only
+scans whatever is currently staged (usually nothing): it isn't a full scan. To scan **every file** or the **whole git history**, use
 gitleaks' official Docker image (the same version as the hook, pinned to its exact
 image, with the project mounted read-only):
 
@@ -183,6 +184,10 @@ image, with the project mounted read-only):
 docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /repo --redact   # every file
 docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact   # the whole history
 ```
+
+The **every file** scan also reads files git ignores, such as your local `.env` and
+`.venv/`. A finding there isn't a committed secret (`.env` is never committed); the
+**whole history** scan shows what was actually committed.
 
 If gitleaks blocks a commit, remove the secret instead of skipping the check
 (never `git commit --no-verify`). If the secret was ever pushed, treat it as leaked
@@ -209,7 +214,9 @@ uv run pytest --cov
   running) and **fails if total coverage drops below 80%**. Coverage is set up in
   `pyproject.toml` (`[tool.coverage.*]`): it measures the project's code (not the
   migrations or the tests), checks both sides of every `if`, and lists the lines no
-  test runs. `--cov-report=html` also writes a browsable report to `htmlcov/`.
+  test runs. For a browsable report as well, run
+  `uv run pytest --cov --cov-report=term-missing --cov-report=html` (it writes
+  `htmlcov/`; naming `--cov-report` replaces the default list, so ask for both).
   `tests/test_migrations.py` also fails if a model changed without a migration.
 - **pip-audit** checks every package in `uv.lock` (exact versions and hashes,
   including the dev tools) against the public vulnerability databases. It prints
@@ -230,12 +237,12 @@ uv run pytest --cov
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
-| `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
 | `compose.yaml` | Postgres for development; the `prod` profile runs the image |
-| `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff) |
+| `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
+| `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
 | `.copier-answers.yml` | Lets `copier update` find the template; don't edit |
 

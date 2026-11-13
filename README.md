@@ -7,7 +7,9 @@ gets only what has to exist on day one:
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID
 - One settings file driven by environment variables (django-environ), secure by default
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
-- pytest and Ruff
+- pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
+- pre-commit (gitleaks and Ruff on every commit) and pip-audit
+- Gunicorn settings in `gunicorn.conf.py`
 
 Everything else (APIs, login pages, front end) is added per project.
 
