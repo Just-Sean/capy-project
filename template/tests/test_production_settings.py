@@ -28,7 +28,10 @@ PRINT_SETTINGS = (
 
 
 def run_manage(*args, **env_changes):
-    env = {"PATH": os.environ["PATH"], **PRODUCTION_ENV, **env_changes}
+    # Only PATH and coverage's own variables (so `pytest --cov` measures this process
+    # too) come from your machine; everything else is the production environment.
+    coverage = {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
+    env = {"PATH": os.environ["PATH"], **coverage, **PRODUCTION_ENV, **env_changes}
     env = {key: value for key, value in env.items() if value is not None}
     return subprocess.run(
         [sys.executable, "manage.py", *args],
