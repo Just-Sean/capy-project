@@ -1,11 +1,21 @@
-"""Gunicorn settings for production. Gunicorn reads this file automatically.
+"""Gunicorn settings for production.
 
-Docker's CMD and a Linux server's service both run `gunicorn config.wsgi`, so these
-settings apply to both. Gunicorn listens on 127.0.0.1:8000 unless told otherwise;
-the Dockerfile tells it to listen on 0.0.0.0:8000 inside the container.
+Gunicorn reads this file automatically when it's started from the project folder
+(Docker's WORKDIR is /app). Started from anywhere else, it silently skips the file,
+so a Linux server's service must set its working directory to the project folder or
+pass `-c /path/to/gunicorn.conf.py`.
+
+Change timeouts and worker recycling here. Change the number of workers with the
+WEB_CONCURRENCY environment variable instead (see the README).
 """
 
 import os
+
+# Listen only on this machine. On a Linux server a reverse proxy (e.g. Caddy or nginx)
+# on the same machine forwards requests here. Set explicitly so a PORT environment
+# variable, which some hosts set, can't make Gunicorn listen on every interface. In
+# Docker the Dockerfile overrides it with --bind 0.0.0.0:8000.
+bind = "127.0.0.1:8000"
 
 # Worker processes. Set WEB_CONCURRENCY on the server, about 2 x CPU cores + 1.
 workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
@@ -23,13 +33,14 @@ max_requests_jitter = 100
 # Workers' heartbeat files go in memory: on a container's disk they can stall workers
 # (Gunicorn's docs recommend /dev/shm in containers). Ruff's S108 warns about shared
 # temp folders; it doesn't apply: Gunicorn makes the files with random names, and only
-# the app runs in the container.
+# the app runs in the container. (/dev/shm is Linux-only; development uses runserver.)
 worker_tmp_dir = "/dev/shm"  # noqa: S108
 
 # Request and error logs go to stdout/stderr, for Docker, systemd or the platform.
 accesslog = "-"
 errorlog = "-"
 
-# Gunicorn's local control socket isn't used: Docker or systemd restart the server.
-# (It would also need a home folder, which the unprivileged app user doesn't have.)
+# Gunicorn's local control socket isn't used: Docker or systemd restart the server,
+# so the `gunicornc` tool can't connect. (The socket would also need a home folder,
+# which the unprivileged app user doesn't have.)
 control_socket_disable = True

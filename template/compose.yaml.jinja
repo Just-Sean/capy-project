@@ -34,6 +34,7 @@ services:
       DJANGO_SESSION_COOKIE_SECURE: "false"
       DJANGO_CSRF_COOKIE_SECURE: "false"
       DJANGO_SECURE_HSTS_SECONDS: "0"
+    # Replaces the Dockerfile's CMD (same --bind; change both together).
     command: sh -c "python manage.py migrate && exec gunicorn config.wsgi --bind 0.0.0.0:8000"
     ports:
       - "127.0.0.1:8000:8000"
