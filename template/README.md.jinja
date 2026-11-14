@@ -694,15 +694,24 @@ docker compose -f compose.yaml -f compose.prod.yaml logs -f web worker caddy   #
 Production keeps everything that can't be rebuilt in three Docker volumes: the
 database (`pgdata`) and the uploads (`media` and `media_public`). Back up all three,
 plus the four `.env` files (without them the backups can't be used), and keep copies
-off the server, encrypted, since they hold every user's data. Run these from the
-project folder on the server:
+off the server, encrypted (e.g. `gpg --symmetric` or `age`), since they hold every
+user's data. Never put backups in the project folder: the image is built from it, and
+a deploy would copy them into the image.
+
+Once, make a backup folder outside the project that only you can read:
+
+```bash
+sudo install -d -m 700 -o "$USER" /var/backups/{{ project_slug }}
+```
+
+Then, from the project folder on the server:
 
 ```bash
 # The database, as one file, while the site runs.
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > db-$(date +%F).dump
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /var/backups/{{ project_slug }}/db-$(date +%F).dump
 # The uploads, private and public.
-docker run --rm -v {{ project_slug }}-production_media:/data:ro -v "$PWD":/backup alpine tar czf /backup/media-$(date +%F).tar.gz -C /data .
-docker run --rm -v {{ project_slug }}-production_media_public:/data:ro -v "$PWD":/backup alpine tar czf /backup/media-public-$(date +%F).tar.gz -C /data .
+docker run --rm -v {{ project_slug }}-production_media:/data:ro -v /var/backups/{{ project_slug }}:/backup alpine tar czf /backup/media-$(date +%F).tar.gz -C /data .
+docker run --rm -v {{ project_slug }}-production_media_public:/data:ro -v /var/backups/{{ project_slug }}:/backup alpine tar czf /backup/media-public-$(date +%F).tar.gz -C /data .
 ```
 
 Run them on a schedule (e.g. a nightly cron job), copy the files somewhere else, then
@@ -711,15 +720,16 @@ restore on another machine now and then.
 
 To restore (replace `DATE` with the backup's date), stop the app and the worker so
 nothing writes meanwhile, put everything back, then start them again. On a new server,
-put the `.env` files back and start production once first, so the volumes exist. The
+put the `.env` files back, make the backup folder and copy the backups into it, and
+start production once first, so the volumes exist. The
 restored uploads are given to the app's own user (10001), so it can still change and
 delete them:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml stop web worker
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < db-DATE.dump
-docker run --rm -v {{ project_slug }}-production_media:/data -v "$PWD":/backup:ro alpine sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
-docker run --rm -v {{ project_slug }}-production_media_public:/data -v "$PWD":/backup:ro alpine sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < /var/backups/{{ project_slug }}/db-DATE.dump
+docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker run --rm -v {{ project_slug }}-production_media_public:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
 ```
 

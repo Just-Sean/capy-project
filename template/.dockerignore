@@ -23,4 +23,8 @@ htmlcov
 staticfiles
 media
 media-public
+# Backups (the README keeps them outside the project; this is in case one lands here):
+# they hold the whole database and every upload.
+**/*.dump
+**/*.tar.gz
 tests
