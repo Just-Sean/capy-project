@@ -75,6 +75,36 @@ def test_something_that_isnt_a_report_is_refused(client, body):
     assert post(client, body).status_code == 400
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["http://[::1/", "http://[not-an-ip]/", "http://exa＃mple.com/"],
+    ids=["unclosed IPv6 bracket", "bad IPv6 host", "host changed by normalizing"],
+)
+def test_a_url_python_cant_read_is_refused_not_a_server_error(url):
+    client = Client(raise_request_exception=False)
+    body = json.dumps({"csp-report": {"document-uri": url}})
+    assert post(client, body).status_code == 400
+
+
+def test_a_login_in_a_reported_url_isnt_logged(client, caplog):
+    report = {"csp-report": {"blocked-uri": "https://user:hunter2@evil.example/x.js"}}
+    with caplog.at_level("WARNING", logger="csp"):
+        post(client, json.dumps(report))
+    [message] = [r.getMessage() for r in caplog.records if r.name == "csp"]
+    assert json.loads(message.removeprefix("CSP violation: ")) == {
+        "blocked-uri": "https://evil.example/x.js"
+    }
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    ["text/plain", "application/x-www-form-urlencoded", "application/json"],
+)
+def test_only_the_type_browsers_send_is_accepted(client, content_type):
+    # Another site's page can make its visitors' browsers send plain text or forms.
+    assert post(client, json.dumps(REPORT), content_type=content_type).status_code == 415
+
+
 def test_only_post_is_accepted(client):
     assert client.get(URL).status_code == 405
 

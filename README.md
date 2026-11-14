@@ -71,11 +71,13 @@ hand. Changes so far that need this:
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
 - **Logs:** production now writes one JSON object per line (Gunicorn's request lines
-  too, without query strings), and Django's errors are no longer emailed to `ADMINS`.
-  If something reads your production logs as text, switch it to JSON. If your project
-  changed `LOGGING` in `config/settings/logs.py`, keep your change there. The
-  Content Security Policy now reports to `/csp-report/`: if your project has its own
-  URL at that path, move one of them.
+  too, without query strings). If something reads your production logs as text,
+  switch it to JSON. If your project set `ADMINS`, Django no longer emails it errors:
+  they're only logged. If your project changed `LOGGING` in `config/settings/logs.py`,
+  or logging in `gunicorn.conf.py`, keep your change alongside the new setup. The
+  Content Security Policy now reports to `/csp-report/` (if your project has its own
+  URL at that path, move one of them), so in development the `runserver` terminal now
+  also shows what the policy would block.
 - **Background jobs:** run `uv sync` (commit the updated `uv.lock`) and
   `uv run python manage.py migrate` (django-tasks-db adds its tables; production's
   `migrate` step does this by itself). In production, enqueued jobs no longer run inside

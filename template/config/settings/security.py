@@ -47,12 +47,15 @@ SECURE_CSP = {
     "form-action": [CSP.SELF],
     "frame-ancestors": [CSP.NONE],  # the same as X_FRAME_OPTIONS, for newer browsers
     # Browsers report what the policy blocked to this view, which logs it
-    # (config/csp_report.py).
+    # (config/csp_report.py). report-uri, not its newer replacement report-to: every
+    # browser still supports report-uri, and report-to needs a Reporting-Endpoints
+    # header and a second report format.
     "report-uri": ["/csp-report/"],
 }
 if IS_DEVELOPMENT:
     # Report only: Django's yellow debug pages use inline styles without the nonce, so
     # an enforced policy would break them. Anything the policy would block still shows
-    # as a warning in the browser console. Tests and production enforce it.
+    # as a warning in the browser console and, as a csp warning, in the runserver
+    # terminal. Tests and production enforce it.
     SECURE_CSP_REPORT_ONLY = SECURE_CSP
     SECURE_CSP = {}

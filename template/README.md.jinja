@@ -447,16 +447,30 @@ Production writes one JSON object per line, so log tools can search by field:
 ```
 
 - **Errors** always include their stack trace (`exception`), on the same line. They're
-  never emailed (`ADMINS` is off): watch the logs, or send them to an error tracker.
+  never emailed, even if you set `ADMINS`: watch the logs, or send them to an error
+  tracker. (To get emails, add Django's `mail_admins` handler to the `django` logger in
+  `config/settings/logs.py`.) Python's warnings are logged too, as `py.warnings`.
 - **Gunicorn's** own lines (`gunicorn.error`) and one line per request
-  (`gunicorn.access`: address, method, path, status, bytes, milliseconds, browser) are
-  JSON too. Request lines leave out query strings, which often carry tokens. The paths
-  can still hold one (Django's password reset links do), and addresses and browsers are
-  personal data, so keep logs as private as the database.
-- **Less or more detail:** set `DJANGO_LOG_LEVEL` (`WARNING`, or `DEBUG`) in the app's
-  environment.
-- Command output (such as the `migrate` step's progress) is plain text: it's printed,
-  not logged.
+  (`gunicorn.access`) are JSON too, with the request's details as text in `message`:
+  address, method, path, status, bytes, milliseconds and browser. Behind a reverse
+  proxy the address is the proxy's; the visitor's is in the proxy's own logs. Docker's
+  health check adds a `GET /healthz` line every 30 seconds.
+- **What's in them:** request lines leave out query strings, which often carry tokens,
+  but a path can still hold one (Django's password reset links do), the secret admin
+  path shows up, and addresses and browsers are personal data. Keep logs as private as
+  the database, and decide how long to keep them.
+- **Less or more detail:** `DJANGO_LOG_LEVEL` is `INFO` by default. Set it to `WARNING`
+  for less, or `DEBUG` for more (for a short while only: some libraries log request
+  headers at `DEBUG`), in `.env` (development) or `.env.production` (the app and the
+  worker), then restart with `docker compose -f compose.yaml -f compose.prod.yaml up -d`.
+  Gunicorn's own lines stay at `INFO`; its `--log-level` option has no effect, because
+  the levels are set in `gunicorn.conf.py`.
+- **Not JSON:** command output (such as the `migrate` step's progress) is printed, not
+  logged, and `runserver`'s request lines keep Django's own format.
+- **Disk space:** Docker keeps container logs without a size limit by default, and
+  anyone can add lines (every request does). Until the starter sets limits, set them on
+  the server, e.g. in `/etc/docker/daemon.json`:
+  `{"log-driver": "local", "log-opts": {"max-size": "10m", "max-file": "5"}}`.
 - The formats are in `config/logging.py` and the setup in `config/settings/logs.py`;
   Gunicorn's is `logconfig_dict` in `gunicorn.conf.py`.
 
@@ -543,11 +557,13 @@ unless noted.
     enforce it, so check the console before you commit.
   - Browsers send what the policy blocked to `/csp-report/` (the policy's `report-uri`),
     which logs a short summary as a `csp` warning: the page, the rule and what was
-    blocked, without query strings or code samples. A run of them after a deploy
-    usually means the policy blocks something a page needs; a few odd ones are often
-    browser extensions. Reports bigger than 10 KB are refused. Anyone can send reports,
-    so a flood shows up in the logs until the proxy's rate limit (a later version of the
-    starter) slows it.
+    blocked, without logins, query strings or code samples. A run of them after a
+    deploy usually means the policy blocks something a page needs; a few odd ones are
+    often browser extensions. In development they also show in the `runserver`
+    terminal, including expected ones from Django's yellow error pages. Reports bigger
+    than 10 KB, or not sent as `application/csp-report`, are refused. Anyone can send
+    reports, so a flood shows up in the logs: give `/csp-report/` a rate limit in your
+    reverse proxy (not set up yet).
 - **HSTS preload is off on purpose.** Being on browsers' preload list is hard to undo
   (removal takes months) and covers every subdomain, so each project opts in when it's
   ready:

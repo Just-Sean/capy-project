@@ -41,9 +41,11 @@ accesslog = "-"
 errorlog = "-"
 # One request per line: address, method, path, status, bytes, milliseconds, browser.
 # The path leaves out the query string (%(U)s, not %(r)s): query strings often carry
-# tokens (password resets, signed links) that shouldn't sit in logs.
+# tokens (signed links, API keys) that shouldn't sit in logs. Behind a reverse proxy
+# the address is the proxy's.
 access_log_format = '%(h)s "%(m)s %(U)s" %(s)s %(B)s %(M)sms "%(a)s"'
-# Both logs as one JSON object per line, like the app's own (config/logging.py).
+# Both logs as one JSON object per line, like the app's own (config/logging.py). The
+# levels are set here: Gunicorn applies --log-level first, so this overrides it.
 logconfig_dict = {
     "version": 1,
     "disable_existing_loggers": False,

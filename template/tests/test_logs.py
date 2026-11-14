@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from django.core import mail
 
 from config.logging import JsonFormatter
 from tests.test_production_settings import run_manage
@@ -91,10 +92,32 @@ def test_errors_are_logged_with_their_stack_trace(environment, json_lines):
         assert "ZeroDivisionError" in result.stderr
 
 
-def test_errors_are_never_emailed(settings):
-    django_logger = settings.LOGGING["loggers"]["django"]
-    assert django_logger["handlers"] == ["console"]
-    assert django_logger["propagate"] is False
+def test_errors_are_never_emailed_even_with_admins_set(settings):
+    settings.ADMINS = ["admin@example.com"]
+    logging.getLogger("django.request").error("Internal Server Error: /page/")
+    assert mail.outbox == []
+
+
+def test_a_lowercase_log_level_works():
+    result = run_manage("check", DJANGO_LOG_LEVEL="debug")
+    assert result.returncode == 0, result.stderr
+
+
+def test_a_python_warning_in_production_is_a_json_line():
+    code = "import warnings\nwarnings.warn('received a naive datetime', RuntimeWarning)\n"
+    result = run_manage("shell", "-c", code)
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert len(lines) == 1, result.stderr
+    entry = json.loads(lines[0])
+    assert entry["logger"] == "py.warnings"
+    assert "received a naive datetime" in entry["message"]
+
+
+@pytest.mark.parametrize("separator", [" ", " ", "\x85", "\x9b"])
+def test_unicode_line_breaks_and_control_codes_are_escaped(separator):
+    line = JsonFormatter().format(record(message="a%sb", args=(separator,)))
+    assert line.isascii()
+    assert len(line.splitlines()) == 1
 
 
 def gunicorn_settings():
@@ -110,14 +133,17 @@ def test_gunicorn_logs_json_too():
 
 
 def test_gunicorn_can_set_up_its_logging():
-    # As Gunicorn does at start: its defaults, updated with ours, then dictConfig. Run in
-    # its own process, so this test process's logging stays as it was.
+    # Gunicorn's own logging setup, with this project's settings, in its own process so
+    # this test process's logging stays as it was.
     script = (
-        "import logging.config, runpy\n"
-        "from gunicorn.glogging import CONFIG_DEFAULTS\n"
-        "config = {**CONFIG_DEFAULTS, **runpy.run_path('gunicorn.conf.py')['logconfig_dict']}\n"
-        "logging.config.dictConfig(config)\n"
-        "logging.getLogger('gunicorn.error').info('started')\n"
+        "import runpy\n"
+        "from gunicorn.config import Config\n"
+        "from gunicorn.glogging import Logger\n"
+        "config = Config()\n"
+        "for name, value in runpy.run_path('gunicorn.conf.py').items():\n"
+        "    if name in config.settings:\n"
+        "        config.set(name, value)\n"
+        "Logger(config).error_log.info('started')\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", script], cwd=PROJECT_DIR, capture_output=True, text=True

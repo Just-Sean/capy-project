@@ -32,4 +32,6 @@ class JsonFormatter(logging.Formatter):
         if record.stack_info:
             entry["stack"] = self.formatStack(record.stack_info)
         # default=str: a value JSON can't hold is written as text instead of failing.
-        return json.dumps(entry, default=str, ensure_ascii=False)
+        # Plain ASCII: other characters are escaped ( ), so Unicode line breaks or
+        # terminal control codes from a request path can't split or garble a line.
+        return json.dumps(entry, default=str)
