@@ -467,11 +467,17 @@ Production writes one JSON object per line, so log tools can search by field:
   the levels are set in `gunicorn.conf.py`.
 - **Not JSON:** command output (such as the `migrate` step's progress) is printed, not
   logged, and `runserver`'s request lines keep Django's own format.
-- **Disk space:** every production container keeps at most 50 MB of logs (Docker's
-  `local` storage: 5 compressed files of 10 MB; set in `x-logging` in
-  `compose.prod.yaml`). Older lines are dropped, so `docker compose ... logs` only
-  goes back so far: to keep logs longer or search them, send them to a log service.
-  Docker's default would keep them without any limit, until the disk filled up.
+- **Disk space:** every production container keeps up to 50 MB of log lines: 5 files of
+  10 MB, all but the newest compressed, so they use far less disk (set in `x-logging`
+  in `compose.prod.yaml`). Without a limit, Docker would keep them until the disk
+  filled up. Older lines are dropped, and a container's logs are deleted when it's
+  recreated (every deploy) or removed (`down`), so
+  `docker compose -f compose.yaml -f compose.prod.yaml logs` only goes back to the last
+  deploy, and less on a busy site. Anyone can push older lines out by sending enough
+  requests, so to keep logs as evidence (or longer, or searchable), send them off the
+  server to a log service. The files are Docker's standard `json-file` format, which
+  log-shipping tools read; to use another log driver, replace the whole `x-logging`
+  block.
 - The formats are in `config/logging.py` and the setup in `config/settings/logs.py`;
   Gunicorn's is `logconfig_dict` in `gunicorn.conf.py`.
 

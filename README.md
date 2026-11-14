@@ -70,9 +70,17 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
-- **Log limits:** each production container now keeps at most 50 MB of logs. Run
-  `docker compose -f compose.yaml -f compose.prod.yaml up -d` once to recreate the
-  containers with the limit (logs kept so far are lost when a container is recreated).
+- **Log limits:** each production container now keeps up to 50 MB of logs, with Docker's
+  `json-file` driver. Your next deploy
+  (`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`)
+  recreates the containers with the limit, which deletes the logs kept so far: save
+  any you need first (`docker compose -f compose.yaml -f compose.prod.yaml logs --no-color > old-logs.txt`,
+  and keep that file private: it holds addresses). This setting replaces any log
+  driver set in `/etc/docker/daemon.json` for these containers: if you forward logs
+  that way (journald, syslog, a log service), put your driver in `x-logging` in
+  `compose.prod.yaml` instead. If your project added its own services to
+  `compose.prod.yaml`, give each `logging: *logging` (services using `<<: *app` already
+  have it), or `tests/test_compose.py` fails.
 - **Logs:** production now writes one JSON object per line (Gunicorn's request lines
   too, without query strings). If something reads your production logs as text,
   switch it to JSON. If your project set `ADMINS`, Django no longer emails it errors:

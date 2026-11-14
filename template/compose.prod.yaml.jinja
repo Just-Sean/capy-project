@@ -11,14 +11,17 @@
 # from development's even on the same machine.
 name: {{ project_slug }}-production
 
-# Every service's logs: Docker's "local" storage, compressed and rotated, at most 5 files
-# of 10 MB per container. Docker's default keeps them without any limit, so a busy or
-# attacked site (every request adds a line) could fill the disk and stop the database.
+# Every service's logs: rotated at 10 MB, at most 5 files per container, full ones
+# compressed. Docker's default keeps them without any limit, so a busy or attacked site
+# (every request adds a line) could fill the disk and stop the database. json-file is
+# Docker's standard format, which every log-shipping tool can read. To use another
+# driver (journald, syslog, ...), replace this whole block: those reject these options.
 x-logging: &logging
-  driver: local
+  driver: json-file
   options:
     max-size: 10m
     max-file: "5"
+    compress: "true"
 
 # The app image, as the migrate step, the app and the worker run it. Locked down: no Linux
 # capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
