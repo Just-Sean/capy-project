@@ -1,5 +1,6 @@
 """The compose files: development stays on this machine, production keeps its secrets in
-env files, migrates before the app starts, runs locked down, and shuts down gracefully.
+env files, migrates before the app starts, runs locked down, limits every container's
+logs, and shuts down gracefully.
 Redis is a cache only: nothing on disk, a memory limit, and internal in production.
 
 `docker compose config` merges the files exactly as `docker compose up` would, without
@@ -192,6 +193,15 @@ def test_the_app_and_redis_run_locked_down(project):
     # Its read-only filesystem leaves only /data, in memory, for the login file.
     assert services["redis"]["tmpfs"] == ["/data:uid=999,gid=999,mode=0700"]
     assert "no-new-privileges:true" in services["db"]["security_opt"]
+
+
+def test_every_production_service_keeps_limited_logs(project):
+    # Docker's default keeps logs without a limit, so they could fill the disk.
+    services = config(project, *PRODUCTION)["services"]
+    for name, service in services.items():
+        options = service.get("logging", {}).get("options", {})
+        assert {"max-size", "max-file"} <= set(options), f"{name} has no log limit"
+        assert service["logging"] == services["web"]["logging"], f"{name} differs"
 
 
 def test_production_restarts_after_a_crash(project):

@@ -11,6 +11,18 @@
 # from development's even on the same machine.
 name: {{ project_slug }}-production
 
+# Every service's logs: rotated at 10 MB, at most 5 files per container, full ones
+# compressed. Docker's default keeps them without any limit, so a busy or attacked site
+# (every request adds a line) could fill the disk and stop the database. json-file is
+# Docker's standard format, which every log-shipping tool can read. To use another
+# driver (journald, syslog, ...), replace this whole block: those reject these options.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+    compress: "true"
+
 # The app image, as the migrate step, the app and the worker run it. Locked down: no Linux
 # capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
 # and the uploads volume.
@@ -23,10 +35,12 @@ x-app: &app
   read_only: true
   tmpfs: [/tmp]
   networks: [backend]
+  logging: *logging
 
 services:
   db:
     env_file: .env.postgres
+    logging: *logging
     security_opt: ["no-new-privileges:true"]
     # No published port and only the internal network: the app reaches it, nothing else.
     # (Its entrypoint starts as root to set up the data folder, so no cap_drop here.)
@@ -40,6 +54,7 @@ services:
   # memory: it only holds the login file Redis writes at start.
   redis:
     env_file: .env.redis
+    logging: *logging
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true

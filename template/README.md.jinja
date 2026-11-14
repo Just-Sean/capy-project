@@ -467,10 +467,17 @@ Production writes one JSON object per line, so log tools can search by field:
   the levels are set in `gunicorn.conf.py`.
 - **Not JSON:** command output (such as the `migrate` step's progress) is printed, not
   logged, and `runserver`'s request lines keep Django's own format.
-- **Disk space:** Docker keeps container logs without a size limit by default, and
-  anyone can add lines (every request does). Until the starter sets limits, set them on
-  the server, e.g. in `/etc/docker/daemon.json`:
-  `{"log-driver": "local", "log-opts": {"max-size": "10m", "max-file": "5"}}`.
+- **Disk space:** every production container keeps up to 50 MB of log lines: 5 files of
+  10 MB, all but the newest compressed, so they use far less disk (set in `x-logging`
+  in `compose.prod.yaml`). Without a limit, Docker would keep them until the disk
+  filled up. Older lines are dropped, and a container's logs are deleted when it's
+  recreated (every deploy) or removed (`down`), so
+  `docker compose -f compose.yaml -f compose.prod.yaml logs` only goes back to the last
+  deploy, and less on a busy site. Anyone can push older lines out by sending enough
+  requests, so to keep logs as evidence (or longer, or searchable), send them off the
+  server to a log service. The files are Docker's standard `json-file` format, which
+  log-shipping tools read; to use another log driver, replace the whole `x-logging`
+  block.
 - The formats are in `config/logging.py` and the setup in `config/settings/logs.py`;
   Gunicorn's is `logconfig_dict` in `gunicorn.conf.py`.
 
@@ -677,7 +684,7 @@ uv run pytest --cov
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
-| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop and the worker time to finish its job |
+| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, and gives Gunicorn time to stop and the worker time to finish its job |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
 | `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
@@ -690,7 +697,7 @@ uv run pytest --cov
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, JSON logs to stdout and stderr |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
-| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app and the job worker, with secrets from `.env.production`, `.env.postgres` and `.env.redis` |
+| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app and the job worker, with secrets from `.env.production`, `.env.postgres` and `.env.redis`, and at most 50 MB of logs per container |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
