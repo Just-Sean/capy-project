@@ -1,0 +1,21 @@
+# Dependabot (GitHub): opens a pull request when a newer version of something the
+# project uses comes out, security fixes included. Turn on "Dependabot alerts" and
+# "Dependabot security updates" in the repository's Settings > Code security too, so
+# known vulnerabilities get a pull request straight away, not only at the weekly check.
+version: 2
+updates:
+  # Python packages: pyproject.toml and uv.lock.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+  # Base images: the app's Dockerfile and Caddy's (deploy/caddy.Dockerfile).
+  - package-ecosystem: docker
+    directories: [/, /deploy]
+    schedule:
+      interval: weekly
+  # Postgres and Redis images in the compose files.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
