@@ -64,6 +64,13 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
+- **Tests fail on every Django deprecation:** tests now fail on every Django deprecation
+  warning, for features removed in the next version and in the one after (e.g.
+  `RemovedInDjango2028Warning`), wherever the warning comes from, including the
+  `manage.py` processes tests start. Before, only warnings raised inside Django's own
+  code failed, and those included non-Django deprecations that Django code triggered,
+  which no longer fail. After updating, run `uv run pytest`: each failure names the
+  deprecated feature in use (in your code or an installed package) and what replaces it.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.
