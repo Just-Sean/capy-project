@@ -21,7 +21,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
-from . import core, database, environment, files, logs, security, users
+from . import core, database, email, environment, files, logs, security, users
 
 # A config/settings.py left over from before the split (e.g. after `copier update`) would
 # be silently ignored, so anything still in it would stop working without a sign.
@@ -31,5 +31,5 @@ if (Path(__file__).resolve().parent.parent / "settings.py").exists():
         "in config/settings/, then delete config/settings.py."
     )
 
-for _topic in (environment, core, database, users, files, security, logs):
+for _topic in (environment, core, database, users, files, email, security, logs):
     globals().update({name: value for name, value in vars(_topic).items() if name.isupper()})
