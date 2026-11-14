@@ -1,0 +1,69 @@
+# The reverse proxy in front of the app: compose.prod.yaml's caddy service. It gets and
+# renews HTTPS certificates for SITE_ADDRESS (from .env.caddy) by itself, and redirects
+# plain HTTP to HTTPS.
+{
+	# Caddy's admin API, which can change this configuration, answers only inside the
+	# container.
+	admin localhost:2019
+}
+
+# The basic security headers on what Caddy serves itself (uploads, the error page). "?"
+# adds each only when the app hasn't set it already. No "Server: Caddy" header.
+(security_headers) {
+	header {
+		?X-Content-Type-Options nosniff
+		?X-Frame-Options DENY
+		?Referrer-Policy same-origin
+		-Server
+	}
+}
+
+{$SITE_ADDRESS} {
+	import security_headers
+
+	# The health checks are for Docker and load balancers, which call the app directly
+	# on the server, not for the public: anyone could see when the database is down.
+	# (A handle block: Caddy runs handle blocks before a bare respond.)
+	@health path /healthz /readyz
+	handle @health {
+		respond 404
+	}
+
+	# Uploaded files, straight from the media volume (when DJANGO_MEDIA_STORAGE is the
+	# default, filesystem). Always as downloads, never shown as pages: an uploaded HTML or
+	# SVG file can't run scripts on this site.
+	handle_path /media/* {
+		root * /srv/media
+		header {
+			Content-Disposition attachment
+			X-Content-Type-Options nosniff
+			Content-Security-Policy "default-src 'none'; sandbox"
+		}
+		file_server
+	}
+
+	handle {
+		reverse_proxy web:8000 {
+			# Caddy takes in the whole request (up to this size) before passing it on,
+			# and takes the response from the app at once, so a slow visitor ties up
+			# Caddy, which handles many at a time, instead of one of Gunicorn's few
+			# workers.
+			request_buffers 4MB
+			response_buffers 4MB
+		}
+	}
+
+	# When the app doesn't answer (restarting, or down): the site's own page, with the
+	# real status (502, 503 or 504), instead of an empty one. Error responses skip the
+	# headers above, so they're added here too.
+	handle_errors 502 503 504 {
+		import security_headers
+		header {
+			Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+			Cache-Control no-store
+		}
+		root * /srv/errors
+		rewrite * /proxy_error.html
+		file_server
+	}
+}

@@ -1,11 +1,12 @@
-# Production: Postgres, Redis, the migrate step, the app and the background-job worker.
-# Run it with
+# Production: Postgres, Redis, the migrate step, the app, the background-job worker and
+# Caddy, the reverse proxy in front of them. Run it with
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
-# Secrets come from three files next to this one, never from this file or the image
-# (git and .dockerignore both ignore them; see the README for what goes in each):
+# Settings and secrets come from four files next to this one, never from this file or
+# the image (git and .dockerignore both ignore them; see the README for each):
 #   .env.production  Django's settings, including DATABASE_URL and CACHE_URL
 #   .env.postgres    the database login: user, password and database name
 #   .env.redis       the Redis password (REDIS_PASSWORD)
+#   .env.caddy       the site's domain (SITE_ADDRESS), for its HTTPS certificate
 
 # Its own project name, so production's containers and database volume are separate
 # from development's even on the same machine.
@@ -81,10 +82,14 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-    # backend reaches the database and Redis; default lets Docker publish the port.
+    # backend reaches the database and Redis; default is where Caddy reaches the app, and
+    # lets it reach the internet (a mail server, S3). No published port: only Caddy
+    # faces the internet.
     networks: [backend, default]
-    ports:
-      - "127.0.0.1:8000:8000"          # this machine only: a reverse proxy forwards to it
+    # Always behind Caddy here, which sets X-Forwarded-Proto and X-Forwarded-For (see
+    # DJANGO_BEHIND_PROXY in .env.example). Not a secret, so it's written here.
+    environment:
+      DJANGO_BEHIND_PROXY: "true"
     volumes:
       - media:/app/media               # uploaded files (the rest of the app is read-only)
     restart: unless-stopped
@@ -120,6 +125,34 @@ services:
     # after this is killed and stays marked as running, so keep each job well under 60s.
     stop_grace_period: 60s
 
+  # The reverse proxy: HTTPS (it gets and renews the certificate itself), uploaded files,
+  # and the site's own page when the app doesn't answer. See deploy/Caddyfile. The only
+  # service the internet reaches. Locked down: no Linux capabilities except binding ports
+  # 80 and 443, no way to gain privileges, a read-only filesystem apart from its volumes.
+  caddy:
+    image: caddy:2.11.9-alpine
+    env_file: .env.caddy
+    logging: *logging
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/tmp]
+    depends_on:
+      web:
+        condition: service_healthy
+    ports:
+      - "80:80"                        # plain HTTP: redirects to HTTPS, and certificate checks
+      - "443:443"                      # HTTPS
+      - "443:443/udp"                  # HTTPS over HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./templates/proxy_error.html:/srv/errors/proxy_error.html:ro
+      - media:/srv/media:ro            # the uploaded files, to serve them
+      - caddy_data:/data               # certificates and keys: keep, or Caddy asks again
+      - caddy_config:/config
+    restart: unless-stopped
+
 networks:
   backend:
     internal: true                     # no internet access from the database or Redis
@@ -127,3 +160,5 @@ networks:
 volumes:
   pgdata:
   media:
+  caddy_data:
+  caddy_config:

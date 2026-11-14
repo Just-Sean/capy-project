@@ -152,8 +152,17 @@ def test_gunicorn_can_set_up_its_logging():
     assert json.loads(result.stderr)["message"] == "started"
 
 
-def test_gunicorns_request_lines_leave_out_query_strings():
+@pytest.mark.parametrize(
+    ("behind_proxy", "client"),
+    [("false", "%(h)s"), ("true", "%({x-forwarded-for}i)s")],
+    ids=["direct", "behind the proxy"],
+)
+def test_gunicorns_request_lines_leave_out_query_strings(monkeypatch, behind_proxy, client):
+    monkeypatch.setenv("DJANGO_BEHIND_PROXY", behind_proxy)
     access_format = gunicorn_settings()["access_log_format"]
+    assert access_format.startswith(client + " ")  # the visitor's address
     assert "%(U)s" in access_format  # the path only
-    for with_query in ["%(r)s", "%(q)s", "%(f)s", "%({"]:  # request line, query, referrer
+    for with_query in ["%(r)s", "%(q)s", "%(f)s"]:  # request line, query, referrer
         assert with_query not in access_format
+    # The only header logged is the address the proxy sets.
+    assert access_format.count("%({") == (client != "%(h)s")

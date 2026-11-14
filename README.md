@@ -27,6 +27,9 @@ gets only what has to exist on day one:
 - Logs as one JSON object per line in production (Gunicorn's too, without query strings),
   readable text in development, and reports of what the Content Security Policy blocked
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
+- Caddy in front in production: automatic HTTPS certificates, uploads served as
+  downloads, the site's own page when the app is down, health checks hidden from the
+  public, and the app itself never published
 - pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
 - pre-commit (gitleaks and Ruff on every commit) and pip-audit
 - Gunicorn settings in `gunicorn.conf.py`
@@ -74,6 +77,13 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
+- **Caddy in front:** production now runs Caddy, which handles HTTPS, so make
+  `.env.caddy` with `SITE_ADDRESS=your.domain` (see the project README's Production
+  section), point the domain's DNS at the server and open ports 80 and 443. The app is
+  no longer published on `127.0.0.1:8000`: if you ran your own reverse proxy in front
+  of it, stop it (Caddy needs ports 80 and 443), or keep yours and remove the `caddy`
+  service. `DJANGO_BEHIND_PROXY` is now set by `compose.prod.yaml`, so you can remove it
+  from `.env.production`.
 - **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
   it), with `base.html`, the error pages and `proxy_error.html`. If your project already
   has its own root `templates/` folder, `copier update` shows a conflict for each file

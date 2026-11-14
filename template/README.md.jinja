@@ -145,22 +145,38 @@ docker compose stop                   # stop Postgres
 
 `compose.prod.yaml` runs production: Postgres and Redis, then a `migrate` step that applies
 migrations and exits, then the app and the background-job `worker` (both only start
-if `migrate` succeeded). It's a
+if `migrate` succeeded), and Caddy, the reverse proxy in front of the app. It's a
 separate Compose project (`{{ project_slug }}-production`) with its own database, so it
 never touches your development data.
 
-The app and the worker run locked down: no Linux capabilities, a read-only filesystem
-(uploads go to the `media` volume). Redis runs the same way, as its own non-root user with a login.
-The database and Redis are only on an internal network with no published port. The
-app is published on this machine only (127.0.0.1:8000), for a reverse proxy.
+Caddy (`deploy/Caddyfile`) is the only part the internet reaches, on ports 80 and 443:
 
-Secrets come from three files next to it, which git and the image all ignore:
+- **HTTPS:** it gets and renews the certificate for the site's domain itself, from
+  Let's Encrypt, and redirects plain HTTP to HTTPS. Certificates are kept in the
+  `caddy_data` volume.
+- **The app:** it forwards requests to Gunicorn, taking in each request and response in
+  full first, so slow visitors tie up Caddy (which handles many at a time), not one of
+  Gunicorn's few workers. It sets `X-Forwarded-Proto` and `X-Forwarded-For`, and the
+  app always runs with `DJANGO_BEHIND_PROXY=true` (set in `compose.prod.yaml`).
+- **Uploaded files:** it serves them from the `media` volume, always as downloads.
+- **When the app doesn't answer** (a restart, or it's down): `templates/proxy_error.html`
+  with the real status (502, 503 or 504).
+- **`/healthz` and `/readyz`:** a 404 from outside (see the health checks below).
+
+The app and the worker run locked down: no Linux capabilities, a read-only filesystem
+(uploads go to the `media` volume). Redis runs the same way, as its own non-root user
+with a login, and Caddy too, apart from being allowed to listen on ports 80 and 443.
+The database and Redis are only on an internal network with no published port, and the
+app has no published port: everything reaches it through Caddy.
+
+Settings and secrets come from four files next to it, which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
 | `.env.production` | the app, the worker and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). If the app sends email (password resets included), also `EMAIL_URL` and `DJANGO_DEFAULT_FROM_EMAIL`: see [Email](#email). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
 | `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
+| `.env.caddy` | Caddy | `SITE_ADDRESS`, the site's domain (e.g. `example.com`, or `example.com, www.example.com` for both), which Caddy gets the certificate for. Not a secret. |
 
 **To try it on your machine,** make the files once. This makes random passwords and
 a random secret key; the files are created readable only by you:
@@ -172,6 +188,7 @@ a random secret key; the files are created readable only by you:
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
   REDIS_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
   echo "REDIS_PASSWORD=$REDIS_PASSWORD" > .env.redis
+  echo "SITE_ADDRESS=localhost" > .env.caddy   # compose.local-http.yaml uses plain HTTP instead
   cat > .env.postgres <<EOF
 POSTGRES_USER=app
 POSTGRES_PASSWORD=$PASSWORD
@@ -192,8 +209,9 @@ you make the files again later, delete that database first (all its data is lost
 `docker compose -f compose.yaml -f compose.prod.yaml down -v`.
 
 Stop `runserver` first, because both use port 8000. On your machine the site runs over
-plain HTTP, so `compose.local-http.yaml` switches the HTTPS settings off. It's only
-for this local check, and never goes on a server:
+plain HTTP, so `compose.local-http.yaml` switches the HTTPS settings off and has Caddy
+answer on <http://localhost:8000> without a certificate. It's only for this local
+check, and never goes on a server:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build   # Ctrl+C stops it
@@ -212,6 +230,7 @@ If the app or the worker doesn't start, the `migrate` step probably failed. See 
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml logs migrate web worker
+docker compose -f compose.yaml -f compose.prod.yaml logs caddy    # the proxy: certificates, config errors
 ```
 
 Stop:
@@ -220,40 +239,47 @@ Stop:
 docker compose -f compose.yaml -f compose.prod.yaml down      # remove the containers (data is kept)
 ```
 
-**On a real server** the same three files hold the real values: the site's domain in
-`DJANGO_ALLOWED_HOSTS`, and `DJANGO_BEHIND_PROXY=true` when a reverse proxy (Caddy,
-nginx) handles HTTPS, or the HTTPS redirect loops forever and login rate limiting
-sees every visitor as the proxy. It expects exactly one proxy, which sets
-`X-Forwarded-Proto` and adds the visitor's address as the last `X-Forwarded-For`
-entry: Caddy does both; nginx needs
-`proxy_set_header X-Forwarded-Proto $scheme;` and
-`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`. With more than one
-proxy (for example a CDN in front), change `config/login_limits.py`. Start it without
-`compose.local-http.yaml`, so the HTTPS protections stay on:
-`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`.
+**On a real server** the same four files hold the real values: the site's domain in
+`SITE_ADDRESS` and `DJANGO_ALLOWED_HOSTS`. Before the first start, point the domain's
+DNS at the server and open ports 80 and 443 (Caddy needs both for the certificate).
+Start it without `compose.local-http.yaml`, so HTTPS and its protections are on:
+`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`, then check
+`docker compose -f compose.yaml -f compose.prod.yaml logs caddy` for "certificate
+obtained successfully".
+
+The app trusts the proxy's headers because exactly one proxy, Caddy, sits in front of
+it. With another proxy or a CDN in front of Caddy, the visitor's address is no longer
+the last `X-Forwarded-For` entry: change `config/login_limits.py`, and Caddy's
+`trusted_proxies`.
 
 Each run of that command migrates first, while the old app and worker keep running, so a
 migration must still work with the code already running (add things first, remove
 them in a later release). There is no rollback to a previous image yet; a later
 version of the starter adds versioned images and deploy steps.
 
-Two health checks answer whatever the Host header is, before the HTTPS redirect, so
-load balancers and proxies (which call them by IP, often over plain HTTP) can poll them:
+Two health checks on the app answer whatever the Host header is, before the HTTPS
+redirect, so something calling the app directly (by IP, often over plain HTTP) can poll
+them. Caddy answers both with a 404 from outside: anyone could otherwise see when the
+database is down, and each call costs a database and Redis query.
 
-| URL | Answers `ok` when | Otherwise | Used by |
+| Path | Answers `ok` when | Otherwise | Used by |
 | --- | --- | --- | --- |
-| <http://localhost:8000/healthz> | The app is running. It never touches the database or Redis | No answer | Docker's `HEALTHCHECK`. A database outage doesn't mark every app container unhealthy (which would fail `up --wait`, and make tools that restart unhealthy containers restart them all) |
-| <http://localhost:8000/readyz> | The database and Redis answer too | 503 `not ready`, and a `Not ready: database failed` (or `cache`) warning in the logs | A load balancer in front of several app servers, to stop sending visitors to one that can't serve them |
+| `/healthz` | The app is running. It never touches the database or Redis | No answer | Docker's `HEALTHCHECK`. A database outage doesn't mark every app container unhealthy (which would fail `up --wait`, and make tools that restart unhealthy containers restart them all) |
+| `/readyz` | The database and Redis answer too | 503 `not ready`, and a `Not ready: database failed` (or `cache`) warning in the logs | A load balancer in front of several app servers, calling each one directly, to stop sending visitors to one that can't serve them |
+
+To call them yourself on the server:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml exec web python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/readyz').read())"
+```
 
 `/readyz` is optional: with one app server there's nowhere else to send visitors, so
-leave it unused (a proxy that health-checks its only server on `/readyz` would refuse
-every request during a short Redis blip). It checks the database over a new connection
-each time, which gives up after 5 seconds (`connect_timeout` in
-`config/settings/database.py`; a `?connect_timeout=10` in `DATABASE_URL` overrides it),
-and Redis gives up after 2: measured with each one frozen, `/readyz` answers 503 in 5
-and 2 seconds. Keep both URLs off the public site: have the proxy answer `/healthz` and
-`/readyz` with a 404, and let the load balancer call the app directly. Otherwise anyone
-can see when the database is down, and each call costs a database and Redis query.
+leave it unused (Caddy doesn't health-check the app: a proxy that checks its only
+server on `/readyz` would refuse every request during a short Redis blip). It checks
+the database over a new connection each time, which gives up after 5 seconds
+(`connect_timeout` in `config/settings/database.py`; a `?connect_timeout=10` in
+`DATABASE_URL` overrides it), and Redis gives up after 2: measured with each one
+frozen, `/readyz` answers 503 in 5 and 2 seconds.
 
 The `worker` has its own Docker health check, `python -m config.health worker`, every
 minute. It's unhealthy when the database doesn't answer, or when a job has waited more
@@ -280,7 +306,7 @@ docker compose -f compose.yaml -f compose.prod.yaml restart worker   # then rest
   (Argon2), so on a small server leave room for that.
 - **Timeouts and worker recycling:** edit `gunicorn.conf.py`.
 - **Where it listens:** in Docker, on port 8000 of the container (set by the
-  Dockerfile). Run directly on a Linux server, only on
+  Dockerfile), reached only by Caddy. Run directly on a Linux server, only on
   127.0.0.1:8000, so a reverse proxy on the same machine (e.g. Caddy or nginx) must
   forward requests to it. Start it from the project folder (or pass
   `-c gunicorn.conf.py`), or it silently ignores its settings file.
@@ -299,9 +325,11 @@ DJANGO_ENV=production DJANGO_DEBUG=true uv run python manage.py check   # error:
 Files people upload (a `FileField` or `ImageField`) are kept on this machine's disk by
 default: `media/` in development, the `media` Docker volume in production. Development
 serves them at `/media/` (only while debug is on, which is development's default).
-Production never serves them from Django: a later version of the starter has the
-reverse proxy serve them. Until then, use S3 if a project needs uploads in production.
-An upload never replaces an existing file with the same name; it gets a new name.
+Production never serves them from Django: Caddy serves them from the `media` volume at
+`/media/`, always as downloads (`Content-Disposition: attachment`, `nosniff` and a
+sandboxing Content Security Policy), so an uploaded HTML or SVG file can't run scripts
+on the site. An upload never replaces an existing file with the same name; it gets a
+new name.
 
 To keep them in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, MinIO,
 ...), set these in the app's environment (`.env.production` with Docker Compose):
@@ -495,22 +523,11 @@ To see the 400, 404 and 500 pages in development:
 3. Remove the line and restart `runserver` when you're done.
 
 `templates/proxy_error.html` is for the reverse proxy, not Django: a complete page,
-loading nothing, for the proxy to show when Django doesn't answer (502, 503, 504: during
-a restart, or when it's down). No proxy is set up yet; when you add one, point those
-errors at it and keep their status:
-
-```text
-# Caddy, inside the site's block
-handle_errors 502 503 504 {
-    root * /path/to/project/templates
-    rewrite * /proxy_error.html
-    file_server
-}
-
-# nginx, inside the server block
-error_page 502 503 504 /proxy_error.html;
-location = /proxy_error.html { root /path/to/project/templates; internal; }
-```
+loading nothing, that Caddy shows when Django doesn't answer (502, 503, 504: during a
+restart, or when it's down), keeping the status (`handle_errors` in
+`deploy/Caddyfile`). With nginx instead, the same is
+`error_page 502 503 504 /proxy_error.html;` and
+`location = /proxy_error.html { root /path/to/project/templates; internal; }`.
 
 ### Logs
 
@@ -533,10 +550,12 @@ Production writes one JSON object per line, so log tools can search by field:
   `config/settings/logs.py`.) Python's warnings are logged too, as `py.warnings`.
 - **Gunicorn's** own lines (`gunicorn.error`) and one line per request
   (`gunicorn.access`) are JSON too, with the request's details as text in `message`:
-  address, method, path, status, bytes, milliseconds and browser. Behind a reverse
-  proxy the address is the proxy's; the visitor's is in the proxy's own logs. Docker's
-  health check adds a `GET /healthz` line every 30 seconds, and a load balancer polling
-  `/readyz` one line per poll.
+  address, method, path, status, bytes, milliseconds and browser. Behind the proxy
+  (`DJANGO_BEHIND_PROXY`), the address is the visitor's, from the `X-Forwarded-For`
+  that Caddy sets. Docker's health check adds a `GET /healthz` line every 30 seconds
+  (from `127.0.0.1`), and a load balancer polling `/readyz` one line per poll. Caddy
+  logs its own errors (certificates, a bad config) as JSON too, but not each request:
+  the app's lines cover those.
 - **What's in them:** request lines leave out query strings, which often carry tokens,
   but a path can still hold one (Django's password reset links do), the secret admin
   path shows up, and addresses and browsers are personal data. Keep logs as private as
@@ -610,9 +629,10 @@ unless noted.
   Django's own login views (the admin, `LoginView`) are covered. Custom code must call
   `authenticate(request, username=..., password=...)` with the request, or the login is
   refused, and tests should log in with `client.force_login(user)` rather than
-  `client.login(...)`. Behind a reverse proxy, set `DJANGO_BEHIND_PROXY=true` (see
-  [On a real server](#production-the-real-image-run-locally)); without it every visitor
-  shares the proxy's address. To unlock early, including yourself in development
+  `client.login(...)`. Behind a reverse proxy, `DJANGO_BEHIND_PROXY` must be true
+  (`compose.prod.yaml` sets it, since Caddy is always in front; see
+  [Production](#production-the-real-image-run-locally)); without it every visitor shares
+  the proxy's address. To unlock early, including yourself in development
   (`<username>` is what was typed in the login form; you can also delete the entry in
   the admin):
 
@@ -651,8 +671,8 @@ unless noted.
     often browser extensions. In development they also show in the `runserver`
     terminal, including expected ones from Django's yellow error pages. Reports bigger
     than 10 KB, or not sent as `application/csp-report`, are refused. Anyone can send
-    reports, so a flood shows up in the logs: give `/csp-report/` a rate limit in your
-    reverse proxy (not set up yet).
+    reports, so a flood shows up in the logs until the proxy's rate limits (a coming
+    version of the starter) slow it.
 - **HSTS preload is off on purpose.** Being on browsers' preload list is hard to undo
   (removal takes months) and covers every subdomain, so each project opts in when it's
   ready:
@@ -771,7 +791,8 @@ uv run pytest --cov
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
-| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, and gives Gunicorn time to stop and the worker time to finish its job |
+| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |
+| `tests/test_caddy.py` | Runs the real Caddy image with `deploy/Caddyfile` and proves the health checks are hidden, uploads are downloads that can't run scripts, and with the app down visitors get the site's page with the real status |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
 | `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
@@ -784,8 +805,9 @@ uv run pytest --cov
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, JSON logs to stdout and stderr |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
-| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app and the job worker, with secrets from `.env.production`, `.env.postgres` and `.env.redis`, and at most 50 MB of logs per container |
-| `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
+| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app, the job worker and Caddy, with settings and secrets from `.env.production`, `.env.postgres`, `.env.redis` and `.env.caddy`, and at most 50 MB of logs per container |
+| `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off and has Caddy answer on `localhost:8000` without a certificate. Never on a server |
+| `deploy/Caddyfile` | Caddy's settings: HTTPS, forwarding to the app, uploads as downloads, the proxy error page, hiding the health checks |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
