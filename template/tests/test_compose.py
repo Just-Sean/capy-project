@@ -43,13 +43,16 @@ def project(tmp_path):
     return tmp_path
 
 
-def config(project, *files):
-    """The merged configuration as written: env files stay env files, nothing filled in."""
+def config(project, *files, as_written=False):
+    """The merged configuration. as_written keeps env files as env files instead of
+    copying their contents into `environment` (Compose's normal, filled-in view)."""
     docker = shutil.which("docker")
     assert docker, "Docker (with Compose) is needed to run this test"
     # Only these files count: not COMPOSE_* variables or a .env from this machine.
     environment = {k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")}
-    command = [docker, "compose", *files, "config", "--no-normalize", "--no-interpolate"]
+    command = [docker, "compose", *files, "config"]
+    if as_written:
+        command += ["--no-normalize", "--no-interpolate"]
     result = subprocess.run(
         [*command, "--format", "json"], cwd=project, env=environment, capture_output=True, text=True
     )
@@ -93,7 +96,7 @@ def test_production_is_a_separate_project_from_development(project):
 
 def test_production_secrets_come_only_from_env_files(project):
     # Written in a compose file, a secret would be committed to git.
-    services = config(project, *PRODUCTION)["services"]
+    services = config(project, *PRODUCTION, as_written=True)["services"]
     assert env_files(services["db"]) == [".env.postgres"]
     for name in APP_SERVICES:
         assert env_files(services[name]) == [".env.production"]
@@ -155,6 +158,6 @@ def test_the_app_gets_longer_to_stop_than_gunicorn_needs(project):
 
 
 def test_only_the_local_http_file_turns_the_https_settings_off(project):
-    services = config(project, *LOCAL_HTTP)["services"]
+    services = config(project, *LOCAL_HTTP, as_written=True)["services"]
     assert set(services["web"]["environment"]) == HTTPS_SETTINGS
     assert [name for name in ["db", "migrate"] if "environment" in services[name]] == []
