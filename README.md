@@ -58,6 +58,12 @@ hand. Changes so far that need this:
   `X-Forwarded-For` (see the project README), or every visitor shares the proxy's
   address. Tests that use `client.login(...)` must switch to
   `client.force_login(user)`.
+- **Uploaded files:** nothing to add; uploads stay on local disk unless you set
+  `DJANGO_MEDIA_STORAGE=s3` (see the project README's Uploaded files section).
+  `config/urls.py` now serves `/media/` in development: if your project already added
+  its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
+  `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
+  `if media_storage == ...` block.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.

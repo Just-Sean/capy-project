@@ -1,5 +1,7 @@
 """Static files (served by WhiteNoise) and uploaded files (local, or S3 if chosen)."""
 
+from urllib.parse import urlsplit
+
 from django.core.exceptions import ImproperlyConfigured
 
 from .environment import BASE_DIR, IS_PRODUCTION, IS_TEST, env
@@ -16,34 +18,48 @@ STORAGES = {
 
 # Uploaded files: on this machine's disk (in production, the `media` Docker volume), or
 # in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, MinIO, ...).
-MEDIA_STORAGE = env("DJANGO_MEDIA_STORAGE", default="filesystem")
-if MEDIA_STORAGE == "filesystem":
+# Lowercase names below are helpers: only uppercase names become Django settings.
+media_storage = env("DJANGO_MEDIA_STORAGE", default="filesystem")
+if media_storage == "filesystem":
     STORAGES["default"] = {"BACKEND": "django.core.files.storage.FileSystemStorage"}
-elif MEDIA_STORAGE == "s3":
-    S3_ENDPOINT_URL = env("DJANGO_MEDIA_S3_ENDPOINT_URL", default=None)  # not needed for AWS
+elif media_storage == "s3":
+    bucket = env("DJANGO_MEDIA_S3_BUCKET", default="")  # required
+    if not bucket or bucket != bucket.strip():
+        raise ImproperlyConfigured("DJANGO_MEDIA_S3_BUCKET must be a bucket name.")
+    endpoint = env("DJANGO_MEDIA_S3_ENDPOINT_URL", default="") or None  # not needed for AWS
+    if endpoint and not urlsplit(endpoint).hostname:
+        raise ImproperlyConfigured("DJANGO_MEDIA_S3_ENDPOINT_URL must be a full address.")
     # Plain http only for a local test service (e.g. MinIO in Docker), never in production.
-    if IS_PRODUCTION and S3_ENDPOINT_URL and not S3_ENDPOINT_URL.startswith("https://"):
+    if IS_PRODUCTION and endpoint and urlsplit(endpoint).scheme.lower() != "https":
         raise ImproperlyConfigured("DJANGO_MEDIA_S3_ENDPOINT_URL must start with https://.")
-    S3_OPTIONS = {
-        "bucket_name": env("DJANGO_MEDIA_S3_BUCKET"),  # required
-        "region_name": env("DJANGO_MEDIA_S3_REGION", default=None),
-        "endpoint_url": S3_ENDPOINT_URL,
-        "location": "media",  # files go under media/ in the bucket
-        "default_acl": "private",  # nobody can read them without a signed link
-        "querystring_auth": True,  # links to them are signed ...
-        "querystring_expire": 3600,  # ... and stop working after an hour
-        "file_overwrite": False,  # an upload never replaces an existing file
+    # The keys stay out of Django's settings: django-storages reads AWS_ACCESS_KEY_ID and
+    # AWS_SECRET_ACCESS_KEY from the environment itself, and without them boto3 uses the
+    # server's own role (e.g. an EC2 or ECS role), which is safer than a long-lived key.
+    # Half a key pair would silently break that, so it's refused.
+    has_key = bool(env("AWS_ACCESS_KEY_ID", default=""))
+    has_secret = bool(env("AWS_SECRET_ACCESS_KEY", default=""))
+    if has_key != has_secret:
+        raise ImproperlyConfigured("Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or neither.")
+    STORAGES["default"] = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "bucket_name": bucket,
+            "region_name": env("DJANGO_MEDIA_S3_REGION", default="") or None,
+            "endpoint_url": endpoint,
+            "location": "media",  # files go under media/ in the bucket
+            # No ACL header: files are private like the bucket (some services refuse one).
+            "querystring_auth": True,  # links to them are signed ...
+            "querystring_expire": 3600,  # ... and stop working after an hour
+            "signature_version": "s3v4",  # the signing every service accepts
+            "file_overwrite": False,  # an upload doesn't replace an existing file
+            # Opening a file downloads it instead of showing it, so an uploaded HTML or
+            # SVG file can't run scripts in the browser.
+            "object_parameters": {"ContentDisposition": "attachment"},
+        },
     }
-    # Keys only if given: without them boto3 uses the server's own role (e.g. an EC2 or
-    # ECS role), which is safer than a long-lived key.
-    S3_ACCESS_KEY = env("AWS_ACCESS_KEY_ID", default=None)
-    if S3_ACCESS_KEY is not None:
-        S3_OPTIONS["access_key"] = S3_ACCESS_KEY
-        S3_OPTIONS["secret_key"] = env("AWS_SECRET_ACCESS_KEY")  # required with a key
-    STORAGES["default"] = {"BACKEND": "storages.backends.s3.S3Storage", "OPTIONS": S3_OPTIONS}
 else:
     raise ImproperlyConfigured(
-        f"DJANGO_MEDIA_STORAGE must be 'filesystem' or 's3', not {MEDIA_STORAGE!r}."
+        f"DJANGO_MEDIA_STORAGE must be 'filesystem' or 's3', not {media_storage!r}."
     )
 
 if IS_TEST:
