@@ -161,24 +161,38 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
-# Login rate limiting (django-axes): after DJANGO_LOGIN_FAILURE_LIMIT failed logins for
-# the same username from the same IP address, that pair is locked out for
-# DJANGO_LOGIN_LOCKOUT_MINUTES (each further try during the lockout restarts it). Other
-# users and addresses aren't affected, and a successful login clears the count. It
-# works through Django's own login, so the admin and any later login page are covered.
-# Attempts and lockouts are in the admin; `manage.py axes_reset` clears them early.
+# Login rate limiting (django-axes, plus config/login_limits.py). Two limits, each over
+# DJANGO_LOGIN_LOCKOUT_MINUTES (each further try during a lockout restarts it):
+#   - DJANGO_LOGIN_FAILURE_LIMIT failed logins for one username from one address lock
+#     that pair out. Someone elsewhere can't lock a real user out this way.
+#   - DJANGO_LOGIN_IP_FAILURE_LIMIT failed logins from one address, whatever usernames
+#     were tried, lock that address out. Higher, so a shared office address is fine.
+# A successful login clears its pair's count. Django's own login views (the admin,
+# LoginView) are covered; custom code must call authenticate(request, ...) with the
+# request, and tests should use client.force_login(user) instead of client.login(...).
+# Failed attempts are kept in the database (not Redis, which can be emptied) until their
+# lockout time has passed, and listed in the admin; `manage.py axes_reset` clears them.
 AUTHENTICATION_BACKENDS = [
-    "axes.backends.AxesStandaloneBackend",  # first: refuses locked-out logins
-    "django.contrib.auth.backends.ModelBackend",
+    "config.login_limits.IPLoginLimitBackend",  # refuses addresses over their limit
+    "axes.backends.AxesStandaloneBackend",  # refuses locked-out username + address pairs
+    "django.contrib.auth.backends.ModelBackend",  # the real login
 ]
 AXES_FAILURE_LIMIT = env.int("DJANGO_LOGIN_FAILURE_LIMIT", default=5)
-AXES_COOLOFF_TIME = timedelta(minutes=env.int("DJANGO_LOGIN_LOCKOUT_MINUTES", default=15))
+LOGIN_IP_FAILURE_LIMIT = env.int("DJANGO_LOGIN_IP_FAILURE_LIMIT", default=30)
+LOGIN_LOCKOUT_MINUTES = env.int("DJANGO_LOGIN_LOCKOUT_MINUTES", default=15)
+if min(AXES_FAILURE_LIMIT, LOGIN_IP_FAILURE_LIMIT, LOGIN_LOCKOUT_MINUTES) < 1:
+    raise ImproperlyConfigured(
+        "DJANGO_LOGIN_FAILURE_LIMIT, DJANGO_LOGIN_IP_FAILURE_LIMIT and "
+        "DJANGO_LOGIN_LOCKOUT_MINUTES must each be at least 1."
+    )
+AXES_COOLOFF_TIME = timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
 AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]  # the pair, not either alone
 AXES_RESET_ON_SUCCESS = True
 AXES_ENABLE_RETRY_AFTER_HEADER = True  # tells clients when they may try again
-AXES_CLIENT_IP_CALLABLE = "config.client_ip.client_ip"  # trusts the proxy only if declared
-# Fewer log lines. Failures and lockouts are still logged, with the username and IP
-# address hidden (AXES_SENSITIVE_PARAMETERS); the full records are in the admin.
+AXES_CLIENT_IP_CALLABLE = "config.login_limits.client_ip"  # trusts a proxy only if declared
+AXES_DISABLE_ACCESS_LOG = True  # don't keep a record of every successful login
+# Shorter log lines. Failures and lockouts are still logged, with these hidden.
+AXES_SENSITIVE_PARAMETERS = ["username", "ip_address"]
 AXES_VERBOSE = False
 
 AUTH_PASSWORD_VALIDATORS = [
@@ -231,7 +245,7 @@ SILENCED_SYSTEM_CHECKS = ["security.W021"]  # the "HSTS preload is off" warning,
 
 # Only behind a proxy you control (nginx, Caddy, a load balancer) that sets these
 # headers: then X-Forwarded-Proto says whether the visitor used HTTPS, and the last
-# X-Forwarded-For entry is the visitor's address (see config/client_ip.py).
+# X-Forwarded-For entry is the visitor's address (see config/login_limits.py).
 BEHIND_PROXY = env.bool("DJANGO_BEHIND_PROXY", default=False)
 if BEHIND_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

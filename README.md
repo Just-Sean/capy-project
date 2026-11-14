@@ -46,10 +46,15 @@ hand. Changes so far that need this:
   development with `docker compose up -d` (it now starts Redis too). For production,
   make `.env.redis` and add `CACHE_URL` to `.env.production`, as the project README's
   Production section shows.
-- **Login rate limiting:** run `migrate` after updating (django-axes adds its tables;
-  production's `migrate` step does this by itself). Behind a reverse proxy, make sure
-  `DJANGO_BEHIND_PROXY=true` is set, or every visitor shares the proxy's address and
-  one person's failed logins can lock out others using the same username.
+- **New packages (Redis cache, login rate limiting):** run `uv sync`, which installs
+  them and updates `uv.lock`, and commit `uv.lock`: the production image installs
+  exactly what it lists.
+- **Login rate limiting:** run `uv run python manage.py migrate` (django-axes adds its
+  tables; production's `migrate` step does this by itself). Behind a reverse proxy,
+  set `DJANGO_BEHIND_PROXY=true` and check the proxy adds the visitor's address to
+  `X-Forwarded-For` (see the project README), or every visitor shares the proxy's
+  address. Tests that use `client.login(...)` must switch to
+  `client.force_login(user)`.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.
