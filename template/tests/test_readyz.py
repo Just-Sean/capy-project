@@ -1,12 +1,17 @@
 """/readyz (the database and Redis answer) and the job worker's health check."""
 
 import os
+import socket
 import subprocess
 import sys
+import threading
 from datetime import timedelta
 
 import pytest
+from django.db import connection
+from django.tasks import TaskResultStatus
 from django.utils import timezone
+from django_tasks_db.models import DBTaskResult
 
 from config import health
 from tests.test_production_settings import PRODUCTION_ENV, PROJECT_DIR, run_manage
@@ -57,8 +62,23 @@ def test_with_the_database_down_readyz_says_so_quickly_and_healthz_still_answers
     ready, healthz = result.stdout.strip().splitlines()[-2:]
     status, seconds = ready.split()
     assert status == "503", result.stderr
-    assert int(seconds) <= 10  # the connect timeouts, not a hang
-    assert healthz == "200"  # Docker doesn't restart the app over a database outage
+    assert int(seconds) <= 5  # a refused connection gives a quick answer
+    assert healthz == "200"  # the app stays healthy through a database outage
+
+
+def test_readyz_gives_up_on_a_database_that_accepts_but_never_answers():
+    # The connection is taken but nothing comes back: connect_timeout gives up.
+    silent = socket.create_server(("127.0.0.1", 0))
+    taken = []
+    threading.Thread(target=lambda: taken.append(silent.accept()), daemon=True).start()
+    url = f"postgres://user:pass@127.0.0.1:{silent.getsockname()[1]}/db"
+    try:
+        result = run_manage("shell", "-c", ASK_BOTH, DATABASE_URL=url)
+    finally:
+        silent.close()
+    status, seconds = result.stdout.strip().splitlines()[-2].split()
+    assert status == "503", result.stderr
+    assert int(seconds) <= 8
 
 
 def test_database_connections_time_out(settings):
@@ -72,38 +92,90 @@ def test_database_url_can_set_its_own_timeout():
     assert "'connect_timeout': 10" in result.stdout, result.stderr
 
 
-@pytest.mark.django_db
-def test_the_worker_is_unhealthy_once_a_job_has_waited_too_long(settings):
+@pytest.fixture
+def stored_jobs(settings):
+    """Jobs stored in the database, as in production (tests otherwise run them at once)."""
     settings.TASKS = {"default": {"BACKEND": DATABASE_BACKEND}}
+
+
+def past_the_wait(moment):
+    return moment + health.MAX_JOB_WAIT + timedelta(seconds=1)
+
+
+@pytest.mark.django_db
+def test_the_worker_is_stuck_once_a_job_has_waited_too_long(stored_jobs):
     assert health.worker_is_healthy()  # nothing waiting
     add.enqueue(2, 3)
     now = timezone.now()
-    assert not health.a_job_has_waited_too_long(now)
-    later = now + health.MAX_JOB_WAIT + timedelta(seconds=1)
-    assert health.a_job_has_waited_too_long(later)
+    assert not health.worker_is_stuck(now)
+    assert health.worker_is_stuck(past_the_wait(now))
 
 
 @pytest.mark.django_db
-def test_a_job_set_to_run_later_counts_from_when_it_may_run(settings):
-    settings.TASKS = {"default": {"BACKEND": DATABASE_BACKEND}}
+def test_a_worker_catching_up_on_a_backlog_isnt_stuck(stored_jobs):
+    # After an outage, old jobs wait while a new worker works through them.
+    add.enqueue(2, 3)
+    later = past_the_wait(timezone.now())
+    DBTaskResult.objects.filter(pk=add.enqueue(1, 1).id).update(
+        status=TaskResultStatus.RUNNING, started_at=later
+    )
+    assert not health.worker_is_stuck(later)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("status", [TaskResultStatus.SUCCESSFUL, TaskResultStatus.FAILED])
+def test_finished_jobs_dont_count(stored_jobs, status):
+    add.enqueue(2, 3)
+    DBTaskResult.objects.update(status=status)
+    assert not health.worker_is_stuck(timezone.now() + timedelta(days=3))
+
+
+@pytest.mark.django_db
+def test_a_job_set_to_run_later_counts_from_when_it_may_run(stored_jobs):
     run_after = timezone.now() + timedelta(hours=1)
     add.using(run_after=run_after).enqueue(2, 3)
-    assert not health.a_job_has_waited_too_long(run_after)
-    late = run_after + health.MAX_JOB_WAIT + timedelta(seconds=1)
-    assert health.a_job_has_waited_too_long(late)
+    assert not health.worker_is_stuck(run_after)
+    assert health.worker_is_stuck(past_the_wait(run_after))
 
 
-def test_a_job_waiting_too_long_makes_the_worker_unhealthy(monkeypatch, caplog):
+@pytest.mark.django_db
+def test_a_job_enqueued_just_now_with_a_past_run_after_hasnt_waited(stored_jobs):
+    add.using(run_after=timezone.now() - timedelta(hours=1)).enqueue(2, 3)
+    assert not health.worker_is_stuck(timezone.now() + timedelta(seconds=1))
+
+
+@pytest.mark.django_db
+def test_jobs_in_a_queue_the_worker_doesnt_serve_dont_count(stored_jobs):
+    add.enqueue(2, 3)
+    DBTaskResult.objects.update(queue_name="emails")
+    assert not health.worker_is_stuck(past_the_wait(timezone.now()))
+
+
+def test_a_stuck_worker_is_unhealthy(monkeypatch, caplog):
     monkeypatch.setitem(health.CHECKS, "database", lambda: None)
-    monkeypatch.setitem(health.CHECKS, "cache", lambda: None)
-    monkeypatch.setattr(health, "a_job_has_waited_too_long", lambda now: True)
+    monkeypatch.setattr(health, "worker_is_stuck", lambda now: True)
     assert not health.worker_is_healthy()
-    assert "Unhealthy: a job has waited over 0:05:00" in caplog.text
+    assert "Unhealthy: no job has started for 0:05:00 while jobs wait" in caplog.text
 
 
 def test_the_worker_is_unhealthy_when_the_database_doesnt_answer(monkeypatch):
     monkeypatch.setitem(health.CHECKS, "database", fail)
     assert not health.worker_is_healthy()
+
+
+@pytest.mark.django_db
+def test_the_worker_doesnt_need_redis(monkeypatch):
+    monkeypatch.setitem(health.CHECKS, "cache", fail)
+    assert health.worker_is_healthy()
+
+
+@pytest.mark.django_db
+def test_the_database_check_uses_its_own_connection():
+    # A kept connection to a database that stops answering could hold the check for good;
+    # a new one gives up after connect_timeout.
+    before = connection.connection
+    health.database_answers()
+    assert connection.connection is before
 
 
 def run_worker_check(*args):

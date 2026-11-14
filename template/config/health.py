@@ -11,22 +11,31 @@ from datetime import timedelta
 
 import django
 from django.core.cache import cache
-from django.db import connection
+from django.db import connections
 from django.db.models import Q
 from django.utils import timezone
 
 # Named in full: run as `python -m config.health`, __name__ would be "__main__".
 logger = logging.getLogger("config.health")
 
-# A job waiting longer than this means the worker is stuck, stopped or can't keep up.
-# Jobs should take well under a minute (see the README), so a healthy worker gets to
-# each one long before this.
+# The worker is unhealthy when a job has waited longer than this AND no job has started
+# for this long: it's stuck or stopped. A busy worker catching up on a backlog keeps
+# starting jobs, so it stays healthy. Jobs should take well under a minute (README).
 MAX_JOB_WAIT = timedelta(minutes=5)
+# The queue and backend `manage.py db_worker` serves by default.
+WORKER_QUEUE = "default"
 
 
 def database_answers():
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT 1")
+    """A new connection each time, not the request's kept one: a database that stops
+    answering a kept connection could hold the check for good, while a new one gives up
+    after connect_timeout (config/settings/database.py)."""
+    database = connections.create_connection("default")
+    try:
+        with database.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    finally:
+        database.close()
 
 
 def cache_answers():
@@ -36,41 +45,45 @@ def cache_answers():
 CHECKS = {"database": database_answers, "cache": cache_answers}
 
 
-def failing_checks():
-    """The names of the checks that fail. Each failure is logged with the error's type
-    only: its message can include connection details."""
+def failing_checks(names=None):
+    """The names of the checks that fail (all of them, or those named). Each failure is
+    logged with the error's type only: its message can include connection details."""
     failing = []
-    for name, check in CHECKS.items():
+    for name in names or CHECKS:
         try:
-            check()
+            CHECKS[name]()
         except Exception as error:  # any failure at all means "not ready"
             logger.warning("Not ready: %s failed (%s)", name, type(error).__name__)
             failing.append(name)
     return failing
 
 
-def a_job_has_waited_too_long(now):
-    """Whether a job has been ready to run for longer than MAX_JOB_WAIT."""
-    # Imported here: its models load only once Django is set up.
+def worker_is_stuck(now):
+    """Whether a job has waited over MAX_JOB_WAIT while no job started in that time."""
+    # Imported here: its models load only once Django is set up. get_date_max is the
+    # value django-tasks-db 0.13 (pinned in pyproject.toml) stores in run_after for "run
+    # as soon as possible"; the tests fail if a new version changes that.
     from django.tasks import TaskResultStatus
     from django_tasks_db.models import DBTaskResult, get_date_max
 
     cutoff = now - MAX_JOB_WAIT
-    # A job enqueued to run straight away has run_after set to the largest date there is;
-    # one set to run later has waited since its run_after.
-    waiting_since_enqueued = Q(run_after=get_date_max(), enqueued_at__lt=cutoff)
-    waiting_since_run_after = Q(run_after__lt=cutoff)
-    waiting = DBTaskResult.objects.filter(status=TaskResultStatus.READY).filter(
-        waiting_since_enqueued | waiting_since_run_after
+    jobs = DBTaskResult.objects.filter(queue_name=WORKER_QUEUE, backend_name="default")
+    # Waiting since it was enqueued, or since its run_after if that's later.
+    waited_too_long = jobs.filter(
+        Q(run_after=get_date_max()) | Q(run_after__lt=cutoff),
+        status=TaskResultStatus.READY,
+        enqueued_at__lt=cutoff,
     )
-    return waiting.exists()
+    started_recently = jobs.filter(started_at__gte=cutoff)
+    return waited_too_long.exists() and not started_recently.exists()
 
 
 def worker_is_healthy():
-    if failing_checks():
+    # Only the database: the worker runs jobs without Redis.
+    if failing_checks(["database"]):
         return False
-    if a_job_has_waited_too_long(timezone.now()):
-        logger.warning("Unhealthy: a job has waited over %s", MAX_JOB_WAIT)
+    if worker_is_stuck(timezone.now()):
+        logger.warning("Unhealthy: no job has started for %s while jobs wait", MAX_JOB_WAIT)
         return False
     return True
 

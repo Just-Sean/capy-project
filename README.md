@@ -72,9 +72,10 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
-- **Readiness check:** `/readyz` is new (the database and Redis answer); point a load
-  balancer or proxy at it. The `worker` now has a Docker health check, and database
-  connections give up after 5 seconds. The health middleware is now
+- **Readiness check:** `/readyz` is new (the database and Redis answer); optionally point
+  a load balancer in front of several app servers at it. The `worker` now has a Docker
+  health check, so `up --wait` takes about a minute longer, and database connections
+  give up after 5 seconds. The health middleware is now
   `config.middleware.health_checks` (it was `healthz`): if your project changed
   `MIDDLEWARE`, keep the new name first in the list. If your project has its own
   `/readyz` URL, it's now answered by the middleware instead.

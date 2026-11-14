@@ -7,9 +7,10 @@ from .environment import IS_TEST, env
 DATABASES = {"default": env.db("DATABASE_URL")}  # required, postgres://user:pass@host:port/name
 DATABASES["default"]["CONN_MAX_AGE"] = env.int("DJANGO_CONN_MAX_AGE", default=60)
 DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
-# Give up connecting after this many seconds, so a database that doesn't answer gives a
-# quick error (and /readyz a quick 503) instead of holding the request. Added to any
-# options in DATABASE_URL, which can still set its own (?connect_timeout=10).
+# Give up connecting after this many seconds, so a database that can't be reached gives
+# a quick error instead of holding the request (/readyz uses a new connection each time,
+# so it always gets this limit). Added to any options in DATABASE_URL, which can still
+# set its own (?connect_timeout=10).
 DATABASES["default"].setdefault("OPTIONS", {}).setdefault("connect_timeout", 5)
 
 # 64-bit whole-number primary keys for every model (the public face is a UUID).

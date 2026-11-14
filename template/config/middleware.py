@@ -11,9 +11,10 @@ def health_checks(get_response):
     It's first in MIDDLEWARE, so they skip the ALLOWED_HOSTS check (load balancers
     call them by IP), the HTTPS redirect and sessions.
       /healthz  "ok" while the process is up and serving requests. It never touches the
-                database, so Docker doesn't restart the app over a database outage.
+                database, so a database outage doesn't make the app container unhealthy.
       /readyz   "ok" only if the database and Redis answer too, else 503 "not ready":
-                for load balancers and proxies, to stop sending traffic it can't serve.
+                for a load balancer, to stop sending traffic to a server that can't
+                serve it.
     """
 
     def middleware(request):
