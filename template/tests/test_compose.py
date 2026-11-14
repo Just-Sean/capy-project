@@ -223,13 +223,24 @@ def test_the_app_redis_and_caddy_run_locked_down(project):
         assert services[name]["cap_drop"] == ["ALL"]
         assert services[name]["read_only"] is True
         assert "no-new-privileges:true" in services[name]["security_opt"]
-    # Caddy gets back only what it needs to listen on ports 80 and 443.
-    assert services["caddy"]["cap_add"] == ["NET_BIND_SERVICE"]
-    assert [name for name in services if "cap_add" in services[name]] == ["caddy"]
+    # No service gets a capability back: Caddy's own user may listen on ports 80 and 443
+    # in its network namespace instead (tests/test_caddy.py checks it isn't root).
+    assert [name for name in services if "cap_add" in services[name]] == []
+    assert services["caddy"]["sysctls"] == {"net.ipv4.ip_unprivileged_port_start": "0"}
+    # Built with the rate-limit plugin, not the official image.
+    assert services["caddy"]["build"]["dockerfile"] == "caddy.Dockerfile"
     assert services["redis"]["user"] == "redis"  # never root
     # Its read-only filesystem leaves only /data, in memory, for the login file.
     assert services["redis"]["tmpfs"] == ["/data:uid=999,gid=999,mode=0700"]
     assert "no-new-privileges:true" in services["db"]["security_opt"]
+
+
+def test_ipv6_visitors_reach_caddy_with_their_own_address(project):
+    # Without IPv6 on Caddy's network, Docker relays IPv6 connections itself, and every
+    # IPv6 visitor shares one address, and one rate limit.
+    production = config(project, *PRODUCTION)
+    assert production["networks"]["default"]["enable_ipv6"] is True
+    assert "default" in production["services"]["caddy"].get("networks", {"default": None})
 
 
 def test_every_production_service_keeps_limited_logs(project):

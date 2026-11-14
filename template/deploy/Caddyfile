@@ -9,6 +9,8 @@
 	log default {
 		exclude admin.api
 	}
+	# The rate limits (below) run first, before anything else answers.
+	order rate_limit before basic_auth
 }
 
 # The basic security headers on what Caddy serves itself (uploads, the error page). "?"
@@ -63,6 +65,40 @@
 				request>headers delete
 				resp_headers delete
 			}
+		}
+	}
+
+	# Rate limits per visitor address, so one address can't flood the site: a 429 with
+	# Retry-After once it's over. Every request counts toward the first. Form posts (the
+	# admin login, any form) also count toward a much stricter one, against password
+	# guessing. Browsers' reports of what the CSP blocked (/csp-report/, sent by
+	# themselves, several a page with some extensions) have their own, so they never use
+	# up a visitor's form posts. Login lockouts in the app (django-axes) still apply on
+	# top. Visitors sharing an address (an office, a mobile network) share these, and
+	# behind a CDN or load balancer every visitor would: raise them, or key them on the
+	# header it sets.
+	rate_limit {
+		zone per_visitor {
+			key {remote_host}
+			events 600
+			window 1m
+		}
+		zone form_posts {
+			match {
+				method POST
+				not path /csp-report/
+			}
+			key {remote_host}
+			events 30
+			window 1m
+		}
+		zone csp_reports {
+			match {
+				path /csp-report/
+			}
+			key {remote_host}
+			events 120
+			window 1m
 		}
 	}
 
