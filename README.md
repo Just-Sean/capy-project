@@ -200,6 +200,10 @@ hand. Changes so far that need this:
   keep their values.
   Code that imported `env` from `config.settings` must now import it from
   `config.settings.environment`.
+- **Dependabot and backups:** `.github/dependabot.yml` is new: in the project's GitHub
+  repository, turn on "Dependabot alerts" and "Dependabot security updates" (Settings >
+  Code security). The project README now has a Backups section: set up the nightly
+  backup it describes.
 - **Postgres image:** projects made before the compose split used the pgvector image.
   The official Postgres image doesn't include pgvector, so a project that uses it must
   switch its image back in `compose.yaml`.

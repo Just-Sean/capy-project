@@ -689,6 +689,43 @@ Production writes one JSON object per line, so log tools can search by field:
 docker compose -f compose.yaml -f compose.prod.yaml logs -f web worker caddy   # follow production's logs
 ```
 
+### Backups
+
+Production keeps everything that can't be rebuilt in three Docker volumes: the
+database (`pgdata`) and the uploads (`media` and `media_public`). Back up all three,
+plus the four `.env` files (without them the backups can't be used), and keep copies
+off the server, encrypted, since they hold every user's data. Run these from the
+project folder on the server:
+
+```bash
+# The database, as one file, while the site runs.
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > db-$(date +%F).dump
+# The uploads, private and public.
+docker run --rm -v {{ project_slug }}-production_media:/data:ro -v "$PWD":/backup alpine tar czf /backup/media-$(date +%F).tar.gz -C /data .
+docker run --rm -v {{ project_slug }}-production_media_public:/data:ro -v "$PWD":/backup alpine tar czf /backup/media-public-$(date +%F).tar.gz -C /data .
+```
+
+Run them on a schedule (e.g. a nightly cron job), copy the files somewhere else, then
+delete them from the server. A backup you've never restored may not work: try a
+restore on another machine now and then.
+
+To restore (replace `DATE` with the backup's date), stop the app and the worker so
+nothing writes meanwhile, put everything back, then start them again. On a new server,
+put the `.env` files back and start production once first, so the volumes exist. The
+restored uploads are given to the app's own user (10001), so it can still change and
+delete them:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml stop web worker
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < db-DATE.dump
+docker run --rm -v {{ project_slug }}-production_media:/data -v "$PWD":/backup:ro alpine sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker run --rm -v {{ project_slug }}-production_media_public:/data -v "$PWD":/backup:ro alpine sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
+```
+
+With S3 uploads, the files are in the bucket: turn on its versioning (and, on AWS, a
+backup plan) instead of the two upload commands.
+
 ### Checking what's running, and cleaning up
 
 ```bash
@@ -870,6 +907,50 @@ uv run pytest --cov
   packages to a temporary file first, so if `uv.lock` is out of date with
   `pyproject.toml` the whole command fails instead of checking nothing.
 
+## Architecture
+
+A shell for a Django site: settings, security, storage, background jobs and deployment
+are done, and the site's features come as Django apps plugged into it.
+
+- **The app (Django, served by Gunicorn):** `config/` wires it together: settings by
+  topic in `config/settings/`, the URL map in `config/urls.py`, health checks, logging
+  and private uploads. `accounts/` holds the custom `User` model. `templates/` has the
+  base page and the error pages.
+- **PostgreSQL** keeps the data, **Redis** is the cache, and the **worker** runs
+  background jobs that the app stores in the database (Django's Tasks API).
+- **Caddy**, in production, is the only part the internet reaches: HTTPS, rate limits,
+  uploaded files, and the error page when the app is down.
+
+A request goes: visitor → Caddy → Gunicorn → Django → PostgreSQL and Redis. Everything
+runs in Docker Compose; settings come from the environment (`.env` files), never from
+the code.
+
+Why these choices: PostgreSQL because it's Django's best-supported database; Redis
+because the login limits and caching need a cache all processes share; Django's own
+Tasks API (with the database as its queue) so jobs need no extra service and apps
+don't depend on one job library; Caddy because it gets and renews HTTPS certificates
+by itself.
+
+### Adding a reusable app
+
+1. Install it (`uv add the-package`) or put its folder at the top of the project.
+2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
+   at the top.
+3. Include its URLs in `config/urls.py`, e.g.
+   `path("billing/", include("billing.urls"))`.
+4. Put any settings it needs in the topic file they belong to (or a new one, added to
+   `config/settings/__init__.py` and `TOPICS` in `tests/test_settings_package.py`),
+   read from the environment, and list each new variable in `.env.example`.
+5. Run `uv run python manage.py migrate` (production's `migrate` step does this by
+   itself), then `uv run pytest`.
+
+What a plugged-in app gets from the shell, and should use: templates extend
+`base.html`; inline scripts and styles need `nonce="{% raw %}{{ csp_nonce }}{% endraw %}"` (see
+Security); users are `settings.AUTH_USER_MODEL`; uploads are private unless stored with
+`public_storage`, and `can_download()` decides who gets them (see Uploaded files);
+slow work goes to a background job with the Tasks API (see Background jobs); email
+goes through `django.core.mail` (see Email).
+
 ## What's in the project
 
 | Path | Purpose |
@@ -915,6 +996,7 @@ uv run pytest --cov
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off and has Caddy answer on `localhost:8000` without a certificate. Never on a server |
 | `deploy/Caddyfile` | Caddy's settings: HTTPS, forwarding to the app, the request size limit, public uploads, sending private uploads the app allowed, all as downloads, the proxy error page, hiding the health checks, its request log |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
+| `.github/dependabot.yml` | Dependabot's weekly check for newer Python packages, base images and the compose files' images (security fixes included), each as a pull request |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
 | `.gitignore`, `.dockerignore` | Files kept out of git and out of the image. Every file whose name starts with `.env` (including `.envrc`), in any folder, is kept out of both; git keeps only `.env.example`. Private keys, certificates, keystores and SSH keys (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `id_rsa` and the like) are kept out of both too. To commit another such file, add a `!` line for it to `.gitignore` |
