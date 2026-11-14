@@ -64,7 +64,9 @@ hand. Changes so far that need this:
 - **Settings split by topic:** `config/settings.py` became the `config/settings/`
   package (one file per topic). If your project changed `config/settings.py`:
   1. Before updating, note your changes, e.g. with `git log -p -- config/settings.py`.
-  2. Run `copier update`.
+  2. Run `copier update`, then `git status`. Copier may delete `config/settings.py`
+     even though you changed it, or leave it in place; either way your changes are
+     still in git history (step 1).
   3. Copy each change into the topic file it belongs in: `environment.py`
      (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time
      and language), `database.py` (and the cache), `users.py` (passwords, login limits),
