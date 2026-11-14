@@ -8,10 +8,20 @@ import pytest
 from django.conf import settings
 
 import config.settings as combined
-from config.settings import core, database, email, environment, files, logs, security, users
+from config.settings import (
+    core,
+    database,
+    email,
+    environment,
+    files,
+    logs,
+    security,
+    tasks,
+    users,
+)
 from tests.test_production_settings import run_manage
 
-TOPICS = [environment, core, database, users, files, email, security, logs]
+TOPICS = [environment, core, database, users, files, email, tasks, security, logs]
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_DIR = PROJECT_DIR / "config" / "settings"
 
