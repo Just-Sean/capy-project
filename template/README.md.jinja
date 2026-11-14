@@ -285,8 +285,8 @@ docker compose -f compose.yaml -f compose.prod.yaml restart worker   # then rest
   forward requests to it. Start it from the project folder (or pass
   `-c gunicorn.conf.py`), or it silently ignores its settings file.
 
-Check it: <http://localhost:8000/admin/> should give a plain "Not Found" with no
-debug details. To see production refuse bad config without Docker:
+Check it: <http://localhost:8000/admin/> should give the site's "Page not found" page,
+with no debug details. To see production refuse bad config without Docker:
 
 ```bash
 DJANGO_READ_DOT_ENV=false uv run python manage.py check                 # error: DJANGO_SECRET_KEY missing
@@ -461,6 +461,55 @@ and `cd` into the project folder first:
 
 ```bash
 0 3 * * * cd /path/to/project && docker compose -f compose.yaml -f compose.prod.yaml run --rm -T worker python manage.py prune_db_task_results
+```
+
+### Error pages
+
+These errors show the site's own pages from `templates/`, with no internal details:
+
+| Page | When |
+| --- | --- |
+| `400.html` | A request the site can't use, e.g. a host name not in `DJANGO_ALLOWED_HOSTS` |
+| `403.html` | Access denied (`PermissionDenied`) |
+| `403_csrf.html` | A form failed its security check (the page was open too long, cookies are blocked, or it came from another site). With debug on it also shows Django's reason, e.g. "CSRF cookie not set" (`config/csrf_failure.py`) |
+| `404.html` | No page at that address |
+| `500.html` | The site crashed. The error is logged with its stack trace (see [Logs](#logs)) |
+
+Other statuses (such as 405, a wrong HTTP method) keep Django's plain responses. In
+development (debug on), Django shows its detailed debug pages for 400, 404 and 500
+instead; the 403 pages show either way. The pages link to `/`, so give your project a
+view at `/` (until then, the link shows the 404 page).
+
+They extend `templates/base.html`, which a project's own pages can extend too: it's
+plain HTML with the browser's own styles, in light or dark to match the visitor. Keep
+`500.html` **and `base.html`** free of anything that needs the request, the user or the
+database: `500.html` extends `base.html`, and Django shows it when those may be what
+failed. For a nav bar or user menu, add a page that extends `base.html`, and have the
+rest of your pages extend that.
+
+To see the 400, 404 and 500 pages in development:
+
+1. Add `DJANGO_DEBUG=false` to `.env`, and restart `runserver`.
+2. Open <http://localhost:8000/no-such-page/>. (With debug off, `runserver` doesn't serve
+   static files, so the admin looks unstyled.)
+3. Remove the line and restart `runserver` when you're done.
+
+`templates/proxy_error.html` is for the reverse proxy, not Django: a complete page,
+loading nothing, for the proxy to show when Django doesn't answer (502, 503, 504: during
+a restart, or when it's down). No proxy is set up yet; when you add one, point those
+errors at it and keep their status:
+
+```text
+# Caddy, inside the site's block
+handle_errors 502 503 504 {
+    root * /path/to/project/templates
+    rewrite * /proxy_error.html
+    file_server
+}
+
+# nginx, inside the server block
+error_page 502 503 504 /proxy_error.html;
+location = /proxy_error.html { root /path/to/project/templates; internal; }
 ```
 
 ### Logs
@@ -707,11 +756,14 @@ uv run pytest --cov
 | `config/health.py` | The checks: the database and Redis answer (`/readyz`), and the worker keeps up (`python -m config.health worker`) |
 | `config/logging.py` | The log formats: one JSON object per line in production, readable text otherwise |
 | `config/csp_report.py` | Logs a short summary of each report of what the Content Security Policy blocked (`/csp-report/`) |
+| `config/csrf_failure.py` | The page for a form that failed its security check, with Django's reason when debug is on |
 | `config/email_not_set_up.py` | The email backend production uses without `EMAIL_URL`: sending fails with a clear error instead of the email being lost |
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
+| `templates/` | Project-wide templates: `base.html`, the error pages (`400`, `403`, `403_csrf`, `404`, `500`) and `proxy_error.html` for the reverse proxy |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
+| `tests/test_error_pages.py` | Proves each error (400, 403, failed form check, 404, 500) shows the site's page without internal details, a failed form check gives its reason only with debug on, a crash shows the 500 page with the database and Redis down, pages always have a title, no page has code the CSP would block, and the proxy's page loads nothing |
 | `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database refuses or never answers (while `/healthz` still answers), the database check uses its own connection, failures are logged without connection details, and the worker's check fails when the database is down or jobs wait with none started, but not for a busy worker, finished jobs, other queues or Redis being down |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
@@ -742,6 +794,7 @@ uv run pytest --cov
 
 ## Conventions
 
-- Each app keeps its own templates in `<app>/templates/<app>/`; there is no root templates folder.
+- Project-wide templates (`base.html`, the error pages) live in the root `templates/`;
+  each app keeps its own in `<app>/templates/<app>/`.
 - Models expose `public_id` (a UUID) in URLs and APIs, never the database `id`.
 - Business logic lives in plain functions (`services.py`, `selectors.py`) that views and APIs share.

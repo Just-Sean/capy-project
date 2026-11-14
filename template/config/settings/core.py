@@ -2,7 +2,7 @@
 
 from django.core.exceptions import ImproperlyConfigured
 
-from .environment import IS_DEVELOPMENT, IS_PRODUCTION, env
+from .environment import BASE_DIR, IS_DEVELOPMENT, IS_PRODUCTION, env
 
 DEBUG = env.bool("DJANGO_DEBUG", default=IS_DEVELOPMENT)
 if IS_PRODUCTION and DEBUG:
@@ -60,7 +60,9 @@ WSGI_APPLICATION = "config.wsgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],  # no root templates folder: each app keeps its own
+        # Project-wide templates: base.html and the error pages. Checked before apps' own
+        # templates, so a file here replaces an app's file with the same name.
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
