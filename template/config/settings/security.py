@@ -46,6 +46,9 @@ SECURE_CSP = {
     "base-uri": [CSP.SELF],
     "form-action": [CSP.SELF],
     "frame-ancestors": [CSP.NONE],  # the same as X_FRAME_OPTIONS, for newer browsers
+    # Browsers report what the policy blocked to this view, which logs it
+    # (config/csp_report.py).
+    "report-uri": ["/csp-report/"],
 }
 if IS_DEVELOPMENT:
     # Report only: Django's yellow debug pages use inline styles without the nonce, so

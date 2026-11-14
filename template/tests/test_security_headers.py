@@ -26,6 +26,7 @@ EXPECTED_POLICY = {
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
     "frame-ancestors": ["'none'"],
+    "report-uri": ["/csp-report/"],
 }
 
 # Inline code the CSP would block: <script> or <style> without a nonce (or a src),

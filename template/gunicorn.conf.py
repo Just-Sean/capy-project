@@ -39,6 +39,34 @@ worker_tmp_dir = "/dev/shm"  # noqa: S108
 # Request and error logs go to stdout/stderr, for Docker, systemd or the platform.
 accesslog = "-"
 errorlog = "-"
+# One request per line: address, method, path, status, bytes, milliseconds, browser.
+# The path leaves out the query string (%(U)s, not %(r)s): query strings often carry
+# tokens (password resets, signed links) that shouldn't sit in logs.
+access_log_format = '%(h)s "%(m)s %(U)s" %(s)s %(B)s %(M)sms "%(a)s"'
+# Both logs as one JSON object per line, like the app's own (config/logging.py).
+logconfig_dict = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"json": {"()": "config.logging.JsonFormatter"}},
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stdout",
+        },
+        "stderr": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stderr",
+        },
+    },
+    # Gunicorn adds this to its own defaults, whose root logger needs a handler from here.
+    "root": {"handlers": ["stderr"], "level": "INFO"},
+    "loggers": {
+        "gunicorn.access": {"handlers": ["stdout"], "level": "INFO", "propagate": False},
+        "gunicorn.error": {"handlers": ["stderr"], "level": "INFO", "propagate": False},
+    },
+}
 
 # Gunicorn's local control socket isn't used: Docker or systemd restart the server,
 # so the `gunicornc` tool can't connect. (The socket would also need a home folder,
