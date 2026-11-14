@@ -70,6 +70,9 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
+- **Log limits:** each production container now keeps at most 50 MB of logs. Run
+  `docker compose -f compose.yaml -f compose.prod.yaml up -d` once to recreate the
+  containers with the limit (logs kept so far are lost when a container is recreated).
 - **Logs:** production now writes one JSON object per line (Gunicorn's request lines
   too, without query strings). If something reads your production logs as text,
   switch it to JSON. If your project set `ADMINS`, Django no longer emails it errors:

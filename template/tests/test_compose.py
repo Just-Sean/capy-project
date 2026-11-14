@@ -194,6 +194,16 @@ def test_the_app_and_redis_run_locked_down(project):
     assert "no-new-privileges:true" in services["db"]["security_opt"]
 
 
+def test_every_production_service_keeps_limited_logs(project):
+    # Docker's default keeps logs without a limit, so they could fill the disk.
+    services = config(project, *PRODUCTION)["services"]
+    for name, service in services.items():
+        logging = service.get("logging", {})
+        assert logging.get("driver") == "local", f"{name} has no log limit"
+        assert logging["options"]["max-size"] == "10m"
+        assert logging["options"]["max-file"] == "5"
+
+
 def test_production_restarts_after_a_crash(project):
     services = config(project, *PRODUCTION)["services"]
     restarts = {services[name]["restart"] for name in ["db", "redis", "web", "worker"]}
