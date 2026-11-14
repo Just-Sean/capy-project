@@ -1,4 +1,5 @@
-"""No .env file reaches git except .env.example, and none reaches the Docker image."""
+"""No .env file reaches git except .env.example, and none reaches the Docker image.
+Private keys (*.pem, *.key) reach neither."""
 
 import os
 import shutil
@@ -8,7 +9,17 @@ from pathlib import Path
 import pytest
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-SECRET_FILES = [".env", ".env.local", ".env.production", ".envrc", "config/.env"]
+SECRET_FILES = [
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".env.postgres",
+    ".envrc",
+    "config/.env",
+    "server.key",
+    "certs/site.pem",
+]
+SECRET_PATTERNS = (".env", ".pem", ".key")
 EXAMPLE = ".env.example"
 
 # Only the copied file's rules count: not this machine's own git settings or ignore list.
@@ -20,7 +31,7 @@ def ignored(ignore_file, names, tmp_path):
 
     .dockerignore is checked the same way. Git and Docker agree on patterns that start
     with "**/"; without it Docker only matches the top folder, which
-    test_dockerignore_env_rules_cover_every_folder guards against.
+    test_dockerignore_secret_rules_cover_every_folder guards against.
     """
     git = shutil.which("git")
     assert git, "git is needed to run this test"
@@ -50,10 +61,14 @@ def test_the_image_gets_no_env_file_at_all(tmp_path):
     }
 
 
-def test_dockerignore_env_rules_cover_every_folder():
+def test_dockerignore_secret_rules_cover_every_folder():
     lines = (PROJECT_DIR / ".dockerignore").read_text().splitlines()
-    env_rules = [line for line in lines if ".env" in line and not line.startswith("#")]
-    assert env_rules, ".dockerignore has no .env rule"
-    assert all(line.startswith("**/") for line in env_rules), (
-        f"Start these with **/ so Docker matches them in every folder: {env_rules}"
+    rules = [
+        line
+        for line in lines
+        if not line.startswith("#") and any(pattern in line for pattern in SECRET_PATTERNS)
+    ]
+    assert len(rules) >= len(SECRET_PATTERNS), f".dockerignore is missing secret rules: {rules}"
+    assert all(line.startswith("**/") for line in rules), (
+        f"Start these with **/ so Docker matches them in every folder: {rules}"
     )

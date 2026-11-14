@@ -1,46 +1,14 @@
-# Development: `docker compose up -d db` starts Postgres; run Django on your machine.
-# Production check: `docker compose --profile prod up --build` also runs the real image.
+# What every environment shares. Docker Compose combines it with another file:
+#   Development: `docker compose up -d db` also loads compose.override.yaml by itself.
+#   Production:  `docker compose -f compose.yaml -f compose.prod.yaml ...` loads
+#                compose.prod.yaml instead (the dev override is left out).
 name: {{ project_slug }}
 
 services:
   db:
-    image: pgvector/pgvector:pg18      # official Postgres 18 + the pgvector extension
-    environment:
-      POSTGRES_USER: app               # dev-only credentials
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: {{ project_slug }}
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"   # reachable from your machine only
-    volumes:
-      - pgdata:/var/lib/postgresql
+    image: postgres:18-trixie        # official Postgres 18 on Debian trixie
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U app -d {{ project_slug }}"]
+      # $$ passes the variables to the container's shell instead of Compose.
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 2s
       retries: 20
-
-  # The production image, run locally over plain HTTP. Not started by default.
-  web:
-    profiles: [prod]
-    build: .
-    environment:
-      DJANGO_ENV: production
-      # A fixed placeholder, only for running the production image locally.
-      DJANGO_SECRET_KEY: local-production-check-only-not-a-real-secret-0123456789-abcdefghijklmnop
-      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1
-      DJANGO_ADMIN_URL: staff/
-      DATABASE_URL: postgres://app:app@db:5432/{{ project_slug }}
-      # Local HTTP only: a real deployment leaves these at their secure defaults.
-      DJANGO_SECURE_SSL_REDIRECT: "false"
-      DJANGO_SESSION_COOKIE_SECURE: "false"
-      DJANGO_CSRF_COOKIE_SECURE: "false"
-      DJANGO_SECURE_HSTS_SECONDS: "0"
-    # Replaces the Dockerfile's CMD (same --bind; change both together).
-    command: sh -c "python manage.py migrate && exec gunicorn config.wsgi --bind 0.0.0.0:8000"
-    ports:
-      - "127.0.0.1:8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  pgdata:

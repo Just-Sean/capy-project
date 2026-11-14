@@ -1,0 +1,46 @@
+# Production: the app image, its migrate step and Postgres. Run it with
+#   docker compose -f compose.yaml -f compose.prod.yaml up --build -d
+# Secrets come from two files next to this one, never from this file or the image
+# (git and .dockerignore both ignore them; see the README for what goes in each):
+#   .env.production  Django's settings, including DATABASE_URL
+#   .env.postgres    POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+
+# Its own project name, so production's containers and database volume are separate
+# from development's even on the same machine.
+name: {{ project_slug }}-production
+
+x-app: &app
+  build: .
+  image: {{ project_slug }}-web
+  env_file: .env.production
+
+services:
+  db:
+    env_file: .env.postgres
+    volumes:
+      - pgdata:/var/lib/postgresql
+    restart: unless-stopped            # no ports: only the app reaches the database
+
+  # Applies migrations, then exits. The app starts only if it succeeded, so new code
+  # never runs against an old database.
+  migrate:
+    <<: *app
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    <<: *app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"          # this machine only: a reverse proxy forwards to it
+    restart: unless-stopped
+    # Longer than Gunicorn's graceful_timeout (30 s), so requests in progress finish
+    # before Docker force-stops the container.
+    stop_grace_period: 35s
+
+volumes:
+  pgdata:
