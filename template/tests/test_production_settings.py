@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from django.conf import settings
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -90,6 +91,13 @@ def test_options_in_the_cache_url_are_kept():
     url = "redis://app:cache-password@localhost:6379/0?health_check_interval=30"
     result = run_manage("shell", "-c", PRINT_CACHE, CACHE_URL=url)
     assert result.stdout.strip().splitlines()[-1].endswith("2 2 True"), result.stderr
+
+
+@pytest.mark.parametrize("url", ["dummycache://", "locmemcache://", ""])
+def test_refuses_a_cache_that_is_not_redis(url):
+    result = run_manage("check", CACHE_URL=url)
+    assert result.returncode != 0
+    assert "CACHE_URL must start with redis://" in result.stderr
 
 
 def test_development_also_refuses_to_start_without_a_cache():

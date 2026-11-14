@@ -78,17 +78,28 @@ def test_development_runs_postgres_and_redis_reachable_from_this_machine(project
     assert host_ips(services["db"]) == host_ips(services["redis"]) == {"127.0.0.1"}
 
 
-def redis_start_script(project):
-    """The shell script the Redis service starts with (sh -c '...')."""
-    command = config(project, as_written=True)["services"]["redis"]["command"]
+def redis_start_script(project, *files):
+    """The shell script the Redis service starts with (sh -c '...'), on one line."""
+    command = config(project, *files, as_written=True)["services"]["redis"]["command"]
     assert command[:2] == ["sh", "-c"]
-    return " ".join(command[2].split())  # one line, single spaces
+    return " ".join(command[2].split())
 
 
-def test_redis_is_a_cache_that_saves_nothing_and_stays_within_its_memory(project):
-    script = redis_start_script(project)
-    for option in ['--save ""', "--appendonly no", "--maxmemory 256mb", "allkeys-lru"]:
-        assert option in script
+def last_value(script, option):
+    """The value Redis uses for an option: the last one given, as Redis reads them."""
+    values = re.findall(rf"{option} (\S+)", script)
+    assert values, f"{option} is missing"
+    return values[-1]
+
+
+@pytest.mark.parametrize("files", [[], PRODUCTION], ids=["development", "production"])
+def test_redis_is_a_cache_that_saves_nothing_and_stays_within_its_memory(project, files):
+    script = redis_start_script(project, *files)
+    assert last_value(script, "--save") == '""'
+    assert last_value(script, "--appendonly") == "no"
+    assert last_value(script, "--maxmemory-policy") == "allkeys-lru"
+    assert re.fullmatch(r"[1-9]\d*mb", last_value(script, "--maxmemory"))  # 0 means no limit
+    assert "volumes" not in config(project, *files)["services"]["redis"]
 
 
 def test_redis_needs_a_login_and_keeps_the_password_out_of_its_arguments(project):
@@ -176,7 +187,7 @@ def test_the_app_and_redis_run_locked_down(project):
         assert "no-new-privileges:true" in services[name]["security_opt"]
     assert services["redis"]["user"] == "redis"  # never root
     # Its read-only filesystem leaves only /data, in memory, for the login file.
-    assert [mount["target"] for mount in services["redis"]["tmpfs"]] == ["/data"]
+    assert services["redis"]["tmpfs"] == ["/data:uid=999,gid=999,mode=0700"]
     assert "no-new-privileges:true" in services["db"]["security_opt"]
 
 

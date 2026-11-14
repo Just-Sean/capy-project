@@ -42,7 +42,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
-    tmpfs: [/data]
+    tmpfs: ["/data:uid=999,gid=999,mode=0700"]   # 999 is the redis user in the image
     networks: [backend]
     restart: unless-stopped
 

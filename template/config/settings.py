@@ -121,10 +121,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Connection and read timeout (not how long keys are kept): a slow or missing Redis
 # fails fast instead of holding a request.
 REDIS_SOCKET_TIMEOUT_SECONDS = 2
+REDIS_URL_SCHEMES = ("redis://", "rediss://")
 if IS_TEST:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 else:
-    CACHES = {"default": env.cache("CACHE_URL")}  # required
+    # Only Redis: a dummy cache stores nothing, and an in-memory one isn't shared
+    # between server processes.
+    if not env("CACHE_URL").startswith(REDIS_URL_SCHEMES):  # required
+        raise ImproperlyConfigured("CACHE_URL must start with redis:// or rediss://.")
+    CACHES = {"default": env.cache("CACHE_URL")}
     CACHES["default"]["BACKEND"] = "django.core.cache.backends.redis.RedisCache"
     # Added to any options given in CACHE_URL itself, e.g. TLS settings for rediss://.
     CACHES["default"].setdefault("OPTIONS", {}).update(
