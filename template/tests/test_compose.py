@@ -1,10 +1,10 @@
 """The compose files: development stays on this machine, production keeps its secrets in
-env files, migrates before the app starts, runs locked down, limits every container's
-logs, and shuts down gracefully.
+env files, migrates before the app starts, runs locked down behind Caddy, limits every
+container's logs, and shuts down gracefully.
 Redis is a cache only: nothing on disk, a memory limit, and internal in production.
 
 `docker compose config` merges the files exactly as `docker compose up` would, without
-starting anything or needing the Docker daemon.
+starting anything or needing the Docker daemon. (tests/test_caddy.py runs Caddy itself.)
 """
 
 import json
@@ -35,14 +35,19 @@ HTTPS_SETTINGS = {
 APP_SERVICES = ["migrate", "web", "worker"]
 
 
+def copy_compose_files(directory):
+    """The compose files in this folder, with empty secret files (production needs
+    them), so `config` can merge them without this machine's own files."""
+    for name in COMPOSE_FILES:
+        shutil.copy(PROJECT_DIR / name, directory / name)
+    for name in [".env.production", ".env.postgres", ".env.redis", ".env.caddy"]:
+        (directory / name).write_text("")
+    return directory
+
+
 @pytest.fixture
 def project(tmp_path):
-    """A copy of the compose files, with empty secret files (production needs them)."""
-    for name in COMPOSE_FILES:
-        shutil.copy(PROJECT_DIR / name, tmp_path / name)
-    for name in [".env.production", ".env.postgres", ".env.redis"]:
-        (tmp_path / name).write_text("")
-    return tmp_path
+    return copy_compose_files(tmp_path)
 
 
 def config(project, *files, as_written=False):
@@ -127,9 +132,9 @@ def test_the_database_is_ready_only_once_it_answers_over_tcp(project):
 # --- Production ------------------------------------------------------------------
 
 
-def test_production_runs_postgres_redis_migrate_the_app_and_the_worker(project):
+def test_production_runs_postgres_redis_migrate_the_app_the_worker_and_caddy(project):
     services = config(project, *PRODUCTION)["services"]
-    assert set(services) == {"db", "redis", "migrate", "web", "worker"}
+    assert set(services) == {"db", "redis", "migrate", "web", "worker", "caddy"}
 
 
 def test_production_is_a_separate_project_from_development(project):
@@ -143,15 +148,41 @@ def test_production_secrets_come_only_from_env_files(project):
     assert env_files(services["redis"]) == [".env.redis"]
     for name in APP_SERVICES:
         assert env_files(services[name]) == [".env.production"]
-    assert [name for name, service in services.items() if "environment" in service] == []
+    assert env_files(services["caddy"]) == [".env.caddy"]
+    # The only setting written here: the app is always behind Caddy. Not a secret.
+    written = {name: set(s["environment"]) for name, s in services.items() if "environment" in s}
+    assert written == {"web": {"DJANGO_BEHIND_PROXY"}}
 
 
-def test_only_the_app_is_published_and_only_on_this_machine(project):
+def test_only_caddy_is_published_and_the_app_is_always_behind_it(project):
     services = config(project, *PRODUCTION)["services"]
-    assert host_ips(services["web"]) == {"127.0.0.1"}
-    unpublished = ["db", "redis", "migrate", "worker"]
-    assert [name for name in unpublished if "ports" in services[name]] == []
+    published = {name for name, service in services.items() if "ports" in service}
+    assert published == {"caddy"}
+    ports = {(p["target"], p.get("protocol", "tcp")) for p in services["caddy"]["ports"]}
+    assert ports == {(80, "tcp"), (443, "tcp"), (443, "udp")}
+    assert services["web"]["environment"]["DJANGO_BEHIND_PROXY"] == "true"
     assert [name for name, service in services.items() if "network_mode" in service] == []
+
+
+def test_caddy_serves_the_uploads_read_only_and_keeps_its_certificates(project):
+    caddy = config(project, *PRODUCTION)["services"]["caddy"]
+    mounts = {volume["target"]: volume for volume in caddy["volumes"]}
+    assert mounts["/srv/media"]["source"] == "media" and mounts["/srv/media"]["read_only"]
+    assert mounts["/data"]["type"] == "volume"  # certificates survive a restart
+    # Folders, not single files: a mounted file stays the old copy after git replaces it.
+    for target in ["/etc/caddy", "/srv/errors"]:
+        assert mounts[target]["type"] == "bind" and mounts[target]["read_only"]
+    # Not waiting for a healthy app: the error page shows even if the app can't start.
+    assert caddy["depends_on"]["web"]["condition"] == "service_started"
+    assert "127.0.0.1:2019" in " ".join(caddy["healthcheck"]["test"])
+
+
+def test_the_apps_tmp_in_memory_has_a_size_limit(project):
+    # Django keeps an upload being received in /tmp, which is in memory.
+    services = config(project, *PRODUCTION)["services"]
+    for name in APP_SERVICES:
+        [memory_folder] = services[name]["tmpfs"]
+        assert ":size=" in memory_folder
 
 
 def test_the_database_and_redis_are_only_on_an_internal_network(project):
@@ -183,12 +214,15 @@ def test_migrate_runs_once_and_has_no_health_check(project):
     assert migrate["healthcheck"]["disable"] is True
 
 
-def test_the_app_and_redis_run_locked_down(project):
+def test_the_app_redis_and_caddy_run_locked_down(project):
     services = config(project, *PRODUCTION)["services"]
-    for name in [*APP_SERVICES, "redis"]:
+    for name in [*APP_SERVICES, "redis", "caddy"]:
         assert services[name]["cap_drop"] == ["ALL"]
         assert services[name]["read_only"] is True
         assert "no-new-privileges:true" in services[name]["security_opt"]
+    # Caddy gets back only what it needs to listen on ports 80 and 443.
+    assert services["caddy"]["cap_add"] == ["NET_BIND_SERVICE"]
+    assert [name for name in services if "cap_add" in services[name]] == ["caddy"]
     assert services["redis"]["user"] == "redis"  # never root
     # Its read-only filesystem leaves only /data, in memory, for the login file.
     assert services["redis"]["tmpfs"] == ["/data:uid=999,gid=999,mode=0700"]
@@ -206,7 +240,7 @@ def test_every_production_service_keeps_limited_logs(project):
 
 def test_production_restarts_after_a_crash(project):
     services = config(project, *PRODUCTION)["services"]
-    restarts = {services[name]["restart"] for name in ["db", "redis", "web", "worker"]}
+    restarts = {services[name]["restart"] for name in ["db", "redis", "web", "worker", "caddy"]}
     assert restarts == {"unless-stopped"}
 
 
@@ -240,8 +274,25 @@ def test_the_worker_gets_time_to_finish_its_job(project):
 # --- The local HTTP check --------------------------------------------------------
 
 
+def environment_of(service):
+    """A service's environment as a dict: as written, merged files can give a list of
+    NAME=value strings instead."""
+    environment = service.get("environment", {})
+    if isinstance(environment, list):
+        return dict(entry.split("=", 1) for entry in environment)
+    return environment
+
+
 def test_only_the_local_http_file_turns_the_https_settings_off(project):
     services = config(project, *LOCAL_HTTP, as_written=True)["services"]
-    assert set(services["web"]["environment"]) == HTTPS_SETTINGS
+    assert set(environment_of(services["web"])) == {*HTTPS_SETTINGS, "DJANGO_BEHIND_PROXY"}
+    assert environment_of(services["caddy"]) == {"SITE_ADDRESS": ":80"}  # plain HTTP
     others = ["db", "redis", "migrate", "worker"]
     assert [name for name in others if "environment" in services[name]] == []
+
+
+def test_the_local_check_is_only_reachable_from_this_machine(project):
+    caddy = config(project, *LOCAL_HTTP)["services"]["caddy"]
+    assert [(p["host_ip"], p["published"], p["target"]) for p in caddy["ports"]] == [
+        ("127.0.0.1", "8000", 80)
+    ]

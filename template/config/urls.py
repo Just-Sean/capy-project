@@ -15,6 +15,6 @@ urlpatterns = [
 ]
 
 # Development serves uploaded files itself. static() adds nothing unless DEBUG is on, so
-# production never does: there a reverse proxy has to serve them (a later version of the
-# starter sets that up), or S3 does.
+# production never does: there Caddy serves them from the media volume
+# (deploy/Caddyfile), or S3 does.
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

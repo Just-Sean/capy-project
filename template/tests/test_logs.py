@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import environ
 import pytest
 from django.core import mail
 
@@ -152,8 +153,28 @@ def test_gunicorn_can_set_up_its_logging():
     assert json.loads(result.stderr)["message"] == "started"
 
 
-def test_gunicorns_request_lines_leave_out_query_strings():
+@pytest.mark.parametrize(
+    "value", ["true", "True", "1", "yes", "on", "y", "ok", "false", "0", "no", "off", ""]
+)
+def test_gunicorn_reads_behind_proxy_the_way_django_does(monkeypatch, value):
+    monkeypatch.setenv("DJANGO_BEHIND_PROXY", value)
+    django_says = environ.Env().bool("DJANGO_BEHIND_PROXY", default=False)
+    gunicorn_says = gunicorn_settings()["access_log_format"].startswith("%({x-forwarded-for}i)s")
+    assert gunicorn_says == django_says
+
+
+@pytest.mark.parametrize(
+    ("behind_proxy", "client"),
+    [("false", "%(h)s"), ("true", "%({x-forwarded-for}i)s")],
+    ids=["direct", "behind the proxy"],
+)
+def test_gunicorns_request_lines_leave_out_query_strings(monkeypatch, behind_proxy, client):
+    monkeypatch.setenv("DJANGO_BEHIND_PROXY", behind_proxy)
     access_format = gunicorn_settings()["access_log_format"]
+    assert access_format.startswith(client + " ")  # the visitor's address
     assert "%(U)s" in access_format  # the path only
-    for with_query in ["%(r)s", "%(q)s", "%(f)s", "%({"]:  # request line, query, referrer
+    for with_query in ["%(r)s", "%(q)s", "%(f)s"]:  # request line, query, referrer
         assert with_query not in access_format
+    # The only header logged is the address the proxy sets.
+    headers_logged = 1 if behind_proxy == "true" else 0
+    assert access_format.count("%({") == headers_logged
