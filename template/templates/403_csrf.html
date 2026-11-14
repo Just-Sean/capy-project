@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 {% comment %}
   Shown when a form fails Django's security check (CSRF): the page was open too long,
-  cookies are blocked, or the form came from another site.
+  cookies are blocked, or the form came from another site. config/csrf_failure.py
+  passes the reason only when debug is on.
 {% endcomment %}
-{% block title %}Please try again{% endblock %}
+{% block title %}Form not sent{% endblock %}
 {% block content %}
-  <h1>Please try again</h1>
-  <p>The form couldn't be sent, so nothing was saved. Go back, reload the page and send it
-    again. If it keeps happening, make sure your browser accepts cookies from this site.</p>
+  <h1>Your form wasn't sent</h1>
+  <p>For your security, the site couldn't accept the form, so nothing was saved. Go back,
+    copy anything you typed, reload the page, then send the form again.</p>
+  <p>If this keeps happening, make sure your browser accepts cookies from this site.</p>
+  {% if reason %}<p>Reason (shown only with debug on): {{ reason }}</p>{% endif %}
   <p><a href="/">Go to the home page</a></p>
 {% endblock %}

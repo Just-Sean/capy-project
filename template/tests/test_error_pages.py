@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 from django.core.exceptions import PermissionDenied, SuspiciousOperation
 from django.http import HttpResponse
+from django.template.loader import render_to_string
 from django.test import Client
 from django.urls import path
 
 from tests.test_production_settings import run_manage
-from tests.test_security_headers import blocked_in
+from tests.test_security_headers import blocked_in, last_line
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 SECRET_DETAIL = "internal detail: db.internal password hunter2"
@@ -40,12 +41,13 @@ urlpatterns = [
     path("form/", a_form),
 ]
 
-# The 500 page as Django renders it on a crash, with nothing listening where the
-# database and Redis should be.
-SERVER_ERROR_WITH_NOTHING_UP = (
-    "from django.test import RequestFactory\n"
-    "from django.views.defaults import server_error\n"
-    "response = server_error(RequestFactory().get('/'))\n"
+# A real crash in a request, through every middleware, in production, with nothing
+# listening where the database and Redis should be.
+CRASH_WITH_NOTHING_UP = (
+    "from django.test import Client, override_settings\n"
+    "with override_settings(ROOT_URLCONF='tests.test_error_pages'):\n"
+    "    response = Client(raise_request_exception=False).get('/crash/', secure=True,"
+    " headers={'host': 'example.com'})\n"
     "print(response.status_code, '<h1>Something went wrong</h1>' in response.content.decode())\n"
 )
 
@@ -76,11 +78,16 @@ def test_each_error_shows_the_sites_page_without_details(visitor, url, status, h
 
 
 @pytest.mark.urls(__name__)
-def test_a_failed_form_security_check_explains_what_to_do():
+@pytest.mark.parametrize("debug", [False, True], ids=["debug off", "debug on"])
+def test_a_failed_form_security_check_explains_what_to_do(settings, debug):
+    settings.DEBUG = debug
     browser = Client(enforce_csrf_checks=True)
     response = browser.post("/form/", {"name": "x"})  # no CSRF token
     assert response.status_code == 403
-    assert "<h1>Please try again</h1>" in response.content.decode()
+    html = response.content.decode()
+    assert "<h1>Your form wasn't sent</h1>" in html
+    # Django's reason is the main clue in development, and never shown in production.
+    assert ("CSRF cookie not set" in html) is debug
 
 
 def test_an_unknown_host_gets_the_400_page(visitor):
@@ -93,11 +100,17 @@ def test_the_500_page_works_with_the_database_and_redis_down():
     result = run_manage(
         "shell",
         "-c",
-        SERVER_ERROR_WITH_NOTHING_UP,
+        CRASH_WITH_NOTHING_UP,
         DATABASE_URL="postgres://user:pass@127.0.0.1:1/db",
         CACHE_URL="redis://app:pass@127.0.0.1:1/0",
     )
-    assert result.stdout.strip().splitlines()[-1] == "500 True", result.stderr
+    assert last_line(result) == "500 True", result.stderr
+    assert "hunter2" not in result.stdout
+
+
+def test_a_page_without_a_title_still_gets_one():
+    html = render_to_string("base.html")
+    assert "<title>Untitled page</title>" in html
 
 
 @pytest.mark.parametrize("page", sorted(TEMPLATES_DIR.glob("*.html")), ids=lambda p: p.name)

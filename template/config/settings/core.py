@@ -60,7 +60,8 @@ WSGI_APPLICATION = "config.wsgi.application"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        # Project-wide templates: base.html and the error pages. Apps keep their own too.
+        # Project-wide templates: base.html and the error pages. Checked before apps' own
+        # templates, so a file here replaces an app's file with the same name.
         "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {

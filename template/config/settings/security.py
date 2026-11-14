@@ -25,6 +25,9 @@ if BEHIND_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 X_FRAME_OPTIONS = "DENY"  # never allow this site inside a frame
+# A form that fails the security check gets the site's page (with the reason when debug
+# is on): config/csrf_failure.py and templates/403_csrf.html.
+CSRF_FAILURE_VIEW = "config.csrf_failure.csrf_failure"
 SECURE_REFERRER_POLICY = "same-origin"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 

@@ -20,8 +20,8 @@ gets only what has to exist on day one:
   production and only over an encrypted connection there
 - Background jobs with Django's Tasks API: run straight away in development and tests,
   stored in the database and run by a worker service in production (django-tasks-db)
-- Minimal, accessible error pages (400, 403, 404, 500) and a `base.html`, plus a static
-  page for the proxy to show when Django is down
+- Minimal, accessible error pages (400, 403, 404, 500, and a failed form security check)
+  and a `base.html`, plus a static page for the reverse proxy to show when Django is down
 - Health checks: `/healthz` (the app runs) for Docker, `/readyz` (the database and Redis
   answer) for load balancers, and one for the job worker
 - Logs as one JSON object per line in production (Gunicorn's too, without query strings),
@@ -76,10 +76,13 @@ hand. Changes so far that need this:
   `if media_storage == ...` block.
 - **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
   it), with `base.html`, the error pages and `proxy_error.html`. If your project already
-  has its own `templates/` folder or error pages, `copier update` shows a conflict for
-  each file with the same name: keep yours or the starter's. Pages your project already
-  had in an app's `templates/` folder stay as they are, but a root one with the same name
-  now takes priority.
+  has its own root `templates/` folder, `copier update` shows a conflict for each file
+  with the same name: keep yours or the starter's. If one of your apps has its own
+  `templates/base.html`, `404.html`, `500.html` (or another of these names), there's no
+  conflict, but the new root file takes priority, so Django stops using yours: delete the
+  starter's root copy, or move yours into the root `templates/`. A failed form security
+  check now uses `CSRF_FAILURE_VIEW = "config.csrf_failure.csrf_failure"`; if your
+  project set its own, keep yours.
 - **Readiness check:** `/readyz` is new (the database and Redis answer); optionally point
   a load balancer in front of several app servers at it. The `worker` now has a Docker
   health check, so `up --wait` takes about a minute longer, and database connections
