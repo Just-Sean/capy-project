@@ -1,4 +1,9 @@
-"""Static files (served by WhiteNoise) and uploaded files (local, or S3 if chosen)."""
+"""Static files (served by WhiteNoise) and uploaded files (local, or S3 if chosen).
+
+Uploads are private by default ("default" storage): only config/uploads.py's view hands
+them out, to those it allows. Files anyone may see use the "public" storage instead:
+FileField(storage=public_storage), from config/uploads.py.
+"""
 
 from urllib.parse import urlsplit
 
@@ -8,20 +13,26 @@ from .environment import BASE_DIR, IS_PRODUCTION, IS_TEST, env
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"  # where collectstatic gathers files
-MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"  # uploads, when they're stored locally
+MEDIA_URL = "media/"  # private uploads' addresses: config/uploads.py checks each request
+MEDIA_ROOT = BASE_DIR / "media"  # private uploads, when they're stored locally
+PUBLIC_MEDIA_URL = "/media-public/"  # public uploads: served to anyone
+PUBLIC_MEDIA_ROOT = BASE_DIR / "media-public"
 
 STORAGES = {
     # Compressed, cache-busting file names (app.3f9a1c.css) in production.
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
 
-# Uploaded files: on this machine's disk (in production, the `media` Docker volume), or
-# in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, MinIO, ...).
-# Lowercase names below are helpers: only uppercase names become Django settings.
+# Uploaded files: on this machine's disk (in production, the `media` and `media_public`
+# Docker volumes), or in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2,
+# MinIO, ...). Lowercase names below are helpers: only uppercase names become settings.
 media_storage = env("DJANGO_MEDIA_STORAGE", default="filesystem")
 if media_storage == "filesystem":
     STORAGES["default"] = {"BACKEND": "django.core.files.storage.FileSystemStorage"}
+    STORAGES["public"] = {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": PUBLIC_MEDIA_ROOT, "base_url": PUBLIC_MEDIA_URL},
+    }
 elif media_storage == "s3":
     bucket = env("DJANGO_MEDIA_S3_BUCKET", default="")  # required
     if not bucket or bucket != bucket.strip():
@@ -40,27 +51,42 @@ elif media_storage == "s3":
     has_secret = bool(env("AWS_SECRET_ACCESS_KEY", default=""))
     if has_key != has_secret:
         raise ImproperlyConfigured("Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY, or neither.")
+    s3_options = {
+        "bucket_name": bucket,
+        "region_name": env("DJANGO_MEDIA_S3_REGION", default="") or None,
+        "endpoint_url": endpoint,
+        # No ACL header: files are private like the bucket (some services refuse one).
+        "querystring_auth": True,  # links to them are signed ...
+        "querystring_expire": 3600,  # ... and stop working after an hour
+        "signature_version": "s3v4",  # the signing every service accepts
+        "file_overwrite": False,  # an upload doesn't replace an existing file
+        # Opening a file downloads it instead of showing it, so an uploaded HTML or SVG
+        # file can't run scripts in the browser.
+        "object_parameters": {"ContentDisposition": "attachment"},
+    }
+    # Both under their own folder in the bucket, both with signed links. can_download()
+    # doesn't apply here: anyone holding a link can download the file until it expires,
+    # so only show a private file's link to those allowed to see it.
     STORAGES["default"] = {
         "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {
-            "bucket_name": bucket,
-            "region_name": env("DJANGO_MEDIA_S3_REGION", default="") or None,
-            "endpoint_url": endpoint,
-            "location": "media",  # files go under media/ in the bucket
-            # No ACL header: files are private like the bucket (some services refuse one).
-            "querystring_auth": True,  # links to them are signed ...
-            "querystring_expire": 3600,  # ... and stop working after an hour
-            "signature_version": "s3v4",  # the signing every service accepts
-            "file_overwrite": False,  # an upload doesn't replace an existing file
-            # Opening a file downloads it instead of showing it, so an uploaded HTML or
-            # SVG file can't run scripts in the browser.
-            "object_parameters": {"ContentDisposition": "attachment"},
-        },
+        "OPTIONS": {**s3_options, "location": "media"},
+    }
+    STORAGES["public"] = {
+        "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {**s3_options, "location": "media-public"},
     }
 else:
     raise ImproperlyConfigured(
         f"DJANGO_MEDIA_STORAGE must be 'filesystem' or 's3', not {media_storage!r}."
     )
+
+# With Docker, Caddy sends a private file once the view has allowed it (X-Accel-Redirect),
+# so no Gunicorn worker is tied up streaming it; compose.prod.yaml turns this on. Without
+# a proxy set up for it, Django sends the file itself. Only for files on this machine's
+# disk: Caddy can't reach files in S3.
+MEDIA_SENT_BY_PROXY = (
+    env.bool("DJANGO_MEDIA_SENT_BY_PROXY", default=False) and media_storage == "filesystem"
+)
 
 if IS_TEST:
     # Serve static files without needing `collectstatic` first.

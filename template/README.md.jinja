@@ -164,17 +164,19 @@ Caddy (`deploy/Caddyfile`) is the only part the internet reaches, on ports 80 an
   `deploy/Caddyfile`). Django keeps an upload being received in the app's `/tmp`, which
   is in memory and capped at 64 MB (`tmpfs` in `compose.prod.yaml`): raise both together
   if a project takes bigger uploads.
-- **Uploaded files:** it serves them from the `media` volume, always as downloads.
+- **Uploaded files:** public ones from the `media_public` volume at `/media-public/`;
+  private ones from the `media` volume only once the app has checked who's asking and
+  named the file (`X-Accel-Redirect`). Always as downloads.
 - **When the app doesn't answer** (a restart, or it's down): `templates/proxy_error.html`
   with the real status (502, 503 or 504).
 - **`/healthz` and `/readyz`:** a 404 from outside (see the health checks below).
 
 The app and the worker run locked down: no Linux capabilities, a read-only filesystem
-(uploads go to the `media` volume, temporary files to an in-memory `/tmp`). Redis runs
-the same way, as its own non-root user with a login. Caddy too, with one capability to
-listen on ports 80 and 443, but as the container's root user: the official image runs
-that way, and without other capabilities that root can only read and write Caddy's own
-files. The database and Redis are only on an internal network with no published port,
+(uploads go to the `media` and `media_public` volumes, temporary files to an in-memory
+`/tmp`). Redis runs the same way, as its own non-root user with a login. Caddy too,
+with one capability to listen on ports 80 and 443, but as the container's root user:
+the official image runs that way, and without other capabilities that root can only
+read and write Caddy's own files. The database and Redis are only on an internal network with no published port,
 and the app has no published port: everything reaches it through Caddy. Docker Compose
 2.24.4 or later is needed (`compose.local-http.yaml` uses `!override`).
 
@@ -356,19 +358,74 @@ DJANGO_ENV=production DJANGO_DEBUG=true uv run python manage.py check   # error:
 ### Uploaded files
 
 Files people upload (a `FileField` or `ImageField`) are kept on this machine's disk by
-default: `media/` in development, the `media` Docker volume in production. Development
-serves them at `/media/` (only while debug is on, which is development's default).
-Production never serves them from Django: Caddy serves them from the `media` volume at
-`/media/`, always as downloads (`Content-Disposition: attachment`, `nosniff` and a
-sandboxing Content Security Policy), so an uploaded HTML or SVG file can't run scripts
-on the site. An upload never replaces an existing file with the same name; it gets a
-new name.
+default: private ones in `media/` (the `media` Docker volume in production), public
+ones in `media-public/` (the `media_public` volume; see below). An upload never
+replaces an existing file with the same name; it gets a new name.
 
-**Stored this way, uploads are public:** anyone with a file's address can download it,
-logged in or not, and addresses are easy to guess (`/media/invoices/invoice-1042.pdf`).
-That suits files anyone may see (pictures on public pages). For private files (ID
-scans, invoices, attachments), use S3, whose links are private and expire, or serve
-them through a view of your own that checks permission first.
+**Uploads are private.** A file's address (`/media/...`, what a field's `.url` gives)
+goes to a view in `config/uploads.py` that checks who's asking first. `can_download()`
+decides: by default only active staff. Everyone else gets a 404, the same as for a file
+that doesn't exist, so nobody learns which files are there. Change `can_download()` to
+your project's rule, for example the file's owner. `name` is the file's stored name,
+the part of the address after `/media/` (e.g. `3f9a.../report.pdf`), as the field
+keeps it in the database:
+
+```python
+# config/uploads.py
+from documents.models import Document  # your app's model
+
+
+def can_download(user, name):
+    return user.is_authenticated and Document.objects.filter(owner=user, file=name).exists()
+```
+
+The view refuses a name with `.` or `..` parts or empty ones (`a/../b`, `a//b`) before
+asking `can_download()`, so the name it checks is always the file that gets sent. It
+answers only `GET` and `HEAD`.
+
+Files are always sent as downloads (`Content-Disposition: attachment`, `nosniff` and a
+sandboxing Content Security Policy), so an uploaded HTML or SVG file can't run scripts
+on the site, and marked `Cache-Control: private, no-store` so no cache keeps them, not
+even the browser's (on a shared computer, the next person can't find them there).
+
+In production with Docker Compose the app only checks: it names the file in an
+`X-Accel-Redirect` header and Caddy sends it from the `media` volume, so a big download
+never ties up a Gunicorn worker. `compose.prod.yaml` turns this on with
+`DJANGO_MEDIA_SENT_BY_PROXY=true`. Caddy acts on that header only for `/media/`
+addresses, and never serves `/media/` by itself. Everywhere else (development, tests,
+S3 storage, or a server without Docker) it's off and Django sends the file itself. On
+a server without Docker, keep it off unless your proxy is set up to send the file the
+header names from the `media/` folder; have the proxy serve `/media-public/` from the
+`media-public/` folder with the same download headers, and never serve `media/`
+directly.
+
+Give each file its own unguessable folder with `upload_to=random_folder` (from
+`config/uploads.py`), so names never collide and one file's address doesn't hint at
+another's:
+
+```python
+from config.uploads import random_folder
+
+
+class Document(models.Model):
+    file = models.FileField(upload_to=random_folder)
+```
+
+**Public uploads, by choice.** For files anyone may see (pictures on public pages),
+store them in the `public` storage instead. They're at `/media-public/`, which
+development serves itself and production's Caddy serves directly, with no check and the
+same download headers. Pass the function `public_storage` itself, not
+`storages["public"]`, so migrations record its name instead of this machine's folder:
+
+```python
+from config.uploads import public_storage, random_folder
+
+
+class Article(models.Model):
+    picture = models.ImageField(storage=public_storage, upload_to=random_folder)
+```
+
+Never put anything private there: anyone with the address can fetch it.
 
 To keep them in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, MinIO,
 ...), set these in the app's environment (`.env.production` with Docker Compose):
@@ -382,21 +439,24 @@ To keep them in S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, Mi
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | A key for this bucket only. Leave both out on AWS to use the server's own role, which is safer than a long-lived key. They keep AWS's standard names (no `DJANGO_` prefix) because boto3 reads them itself |
 
 The key (or the server's role) needs `s3:GetObject`, `s3:PutObject` and
-`s3:DeleteObject` on `arn:aws:s3:::BUCKET/media/*`, and `s3:ListBucket` on
-`arn:aws:s3:::BUCKET`. Without `ListBucket`, S3 answers "forbidden" instead of "not
-found" when the starter checks a name is free, and uploads fail.
+`s3:DeleteObject` on `arn:aws:s3:::BUCKET/media/*` and
+`arn:aws:s3:::BUCKET/media-public/*`, and `s3:ListBucket` on `arn:aws:s3:::BUCKET`.
+Without `ListBucket`, S3 answers "forbidden" instead of "not found" when the starter
+checks a name is free, and uploads fail.
 
-Files go under `media/` in the bucket and are private: nobody can open one without a
-signed link. A field's `.url` (e.g. `document.attachment.url`) gives a link that stops
-working after an hour, so call `.url` each time you show the file; don't save the link,
+Files go under `media/` in the bucket (public ones under `media-public/`) and all are
+private in the bucket: nobody can open one without a signed link. With S3,
+`can_download()` doesn't apply: whoever has a signed link can download the file until
+it expires, so only show a private file's `.url` to those allowed to see it. A field's
+`.url` (e.g. `document.attachment.url`) gives a link that stops working after an hour,
+public files' too, so call `.url` each time you show the file; don't save the link,
 email it or cache a page holding it for longer than that. Opening a file downloads it
 rather than showing it in the browser, so an uploaded HTML or SVG file can't run
 scripts (images in `<img>` tags still show). Keep the bucket itself private (block
 public access), and never serve it from the site's own domain.
 
 Two uploads with the same name at the same moment can still both pass S3's "is this
-name free" check, and one replaces the other. When a project adds uploads, give each
-one its own folder in `upload_to` (e.g. a random UUID) so names never collide.
+name free" check, and one replaces the other: `upload_to=random_folder` prevents that.
 
 The settings refuse to start with an unknown `DJANGO_MEDIA_STORAGE`, an empty or missing
 bucket, an address that isn't a full URL (or isn't `https://` in production), or only
@@ -596,7 +656,7 @@ Production writes one JSON object per line, so log tools can search by field:
   because they call the app directly, without Caddy's `X-Forwarded-For`.
 - **Caddy's** lines are JSON too: its own errors (certificates, a bad config), and one
   line (`http.log.access`) per request it answers itself, which never reach the app:
-  uploads, the hidden health checks, refused oversized requests, and the error page
+  public uploads, the hidden health checks, refused oversized requests, and the error page
   while the app is down. They leave out query strings and headers. Requests the app
   answers are logged once, by Gunicorn.
 - **What's in them:** request lines leave out query strings, which often carry tokens,
@@ -815,7 +875,8 @@ uv run pytest --cov
 | Path | Purpose |
 | --- | --- |
 | `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `tasks.py` (background jobs), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
-| `config/urls.py` | The root URL map; each app adds its URLs here. Also `/csp-report/`, and uploaded files at `/media/` in development |
+| `config/urls.py` | The root URL map; each app adds its URLs here. Also `/csp-report/`, private uploads at `/media/`, and public uploads at `/media-public/` in development |
+| `config/uploads.py` | Private uploads: `can_download()` (who may download a file), the view that checks it and sends the file (or has Caddy send it), `random_folder` for `upload_to`, and `public_storage` for files anyone may see |
 | `config/middleware.py` | Answers `/healthz` and `/readyz` before anything else runs |
 | `config/health.py` | The checks: the database and Redis answer (`/readyz`), and the worker keeps up (`python -m config.health worker`) |
 | `config/logging.py` | The log formats: one JSON object per line in production, readable text otherwise |
@@ -836,12 +897,13 @@ uv run pytest --cov
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |
-| `tests/test_caddy.py` | Runs the real Caddy image with `deploy/Caddyfile`, locked down as in production, and proves the config is valid, the health checks are hidden, uploads are downloads that can't run scripts, folders are never listed, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
+| `tests/test_caddy.py` | Runs the real Caddy image with `deploy/Caddyfile`, locked down as in production, and proves the config is valid, the health checks are hidden, public uploads are downloads that can't run scripts, folders are never listed, a private upload is never served by its path but is sent (as a download, with the app's cookies) once the app names it, and only for `/media/` addresses, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
 | `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
 | `tests/test_email.py` | Proves email is printed in development, always kept in memory in tests, and in production either fails clearly when not set up or goes over an encrypted connection (with a From address and a timeout), a login never goes over plain SMTP, and unsafe, incomplete or unreadable `EMAIL_URL`s (such as a password that wasn't percent-encoded) are refused without showing the password |
-| `tests/test_uploaded_files.py` | Proves uploads are local by default, never replace an existing file and can't escape the media folder, only development serves them, S3 files are private downloads with SigV4 links that expire after an hour, keys come from the environment and never appear in Django's settings (without them, the server's role is used), and bad upload settings are refused |
+| `tests/test_private_uploads.py` | Proves only active staff get a private file, as a download no cache keeps, everyone else (and a missing file, a folder, a name outside the folder or with `.`/`..` parts, even against a rule on the name) gets a 404, only GET and HEAD are answered, behind Caddy the app only names the file, `random_folder` gives each file its own folder, and `public_storage` saves to the public folder and is recorded in migrations by name |
+| `tests/test_uploaded_files.py` | Proves uploads are local by default, never replace an existing file and can't escape the media folder, private uploads always go through the check while only development serves public ones, public uploads have their own folder and address, Caddy sends private files only when they're on this machine, S3 files are private downloads with SigV4 links that expire after an hour, keys come from the environment and never appear in Django's settings (without them, the server's role is used), and bad upload settings are refused |
 | `tests/test_logs.py` | Proves log lines are one JSON object each in production (stack traces and line breaks included, request query strings left out) and readable text in development, errors are logged once with their stack trace and never emailed, and Gunicorn can set up the same JSON logs without query strings |
 | `tests/test_csp_report.py` | Proves a CSP report is logged as a short summary without query strings, samples or fake extra lines, and that huge reports, things that aren't reports and GETs are refused |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
@@ -851,7 +913,7 @@ uv run pytest --cov
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
 | `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app, the job worker and Caddy, with settings and secrets from `.env.production`, `.env.postgres`, `.env.redis` and `.env.caddy`, and at most 50 MB of logs per container |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off and has Caddy answer on `localhost:8000` without a certificate. Never on a server |
-| `deploy/Caddyfile` | Caddy's settings: HTTPS, forwarding to the app, the request size limit, uploads as downloads, the proxy error page, hiding the health checks, its request log |
+| `deploy/Caddyfile` | Caddy's settings: HTTPS, forwarding to the app, the request size limit, public uploads, sending private uploads the app allowed, all as downloads, the proxy error page, hiding the health checks, its request log |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |

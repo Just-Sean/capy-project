@@ -26,7 +26,7 @@ x-logging: &logging
 
 # The app image, as the migrate step, the app and the worker run it. Locked down: no Linux
 # capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
-# and the uploads volume.
+# and the two uploads volumes.
 x-app: &app
   build: .
   image: {{ project_slug }}-web
@@ -88,12 +88,16 @@ services:
     # lets it reach the internet (a mail server, S3). No published port: only Caddy
     # faces the internet.
     networks: [backend, default]
-    # Always behind Caddy here, which sets X-Forwarded-Proto and X-Forwarded-For (see
-    # DJANGO_BEHIND_PROXY in .env.example). Not a secret, so it's written here.
+    # Not secrets, so written here. Always behind Caddy, which sets X-Forwarded-Proto and
+    # X-Forwarded-For (DJANGO_BEHIND_PROXY in .env.example), and sends private uploads
+    # once the app has checked who's asking (DJANGO_MEDIA_SENT_BY_PROXY,
+    # config/uploads.py).
     environment:
       DJANGO_BEHIND_PROXY: "true"
+      DJANGO_MEDIA_SENT_BY_PROXY: "true"
     volumes:
-      - media:/app/media               # uploaded files (the rest of the app is read-only)
+      - media:/app/media               # private uploads (the rest of the app is read-only)
+      - media_public:/app/media-public # public uploads
     restart: unless-stopped
     # Longer than Gunicorn's graceful_timeout (30 s), so requests in progress finish
     # before Docker force-stops the container.
@@ -122,6 +126,7 @@ services:
     networks: [backend, default]
     volumes:
       - media:/app/media               # the same uploaded files the app sees
+      - media_public:/app/media-public
     restart: unless-stopped
     # On stop, the worker finishes the job in progress, then exits. A job still running
     # after this is killed and stays marked as running, so keep each job well under 60s.
@@ -163,7 +168,10 @@ services:
       # container after git or copier replaces it.
       - ./deploy:/etc/caddy:ro         # the Caddyfile
       - ./templates:/srv/errors:ro     # proxy_error.html (the only file it serves from here)
-      - media:/srv/media:ro            # the uploaded files, to serve them
+      # Uploads, to serve them: public ones to anyone, private ones only when the app
+      # has checked who's asking (X-Accel-Redirect).
+      - media:/srv/media:ro
+      - media_public:/srv/media-public:ro
       - caddy_data:/data               # certificates and keys: keep, or Caddy asks again
       - caddy_config:/config
     restart: unless-stopped
@@ -175,5 +183,6 @@ networks:
 volumes:
   pgdata:
   media:
+  media_public:
   caddy_data:
   caddy_config:

@@ -22,4 +22,5 @@ htmlcov
 **/id_ed25519
 staticfiles
 media
+media-public
 tests
