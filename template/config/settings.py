@@ -18,6 +18,7 @@ from pathlib import Path
 
 import environ
 from django.core.exceptions import ImproperlyConfigured
+from django.utils.csp import CSP
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -69,13 +70,18 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
+    # Before staticfiles: stops runserver serving static files itself, so WhiteNoise
+    # serves them in development too, with the same headers (including the CSP).
+    "whitenoise.runserver_nostatic",
     "django.contrib.staticfiles",
 ]
 
 MIDDLEWARE = [
     "config.middleware.healthz",  # first: answers /healthz before host checks or the database
     "django.middleware.security.SecurityMiddleware",
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # static files, right after security
+    "django.middleware.csp.ContentSecurityPolicyMiddleware",  # sends SECURE_CSP below
+    # Static files, right after the security headers, so they carry them (and the CSP) too.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -95,6 +101,7 @@ TEMPLATES = [
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
+                "django.template.context_processors.csp",  # {{ csp_nonce }} in templates
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
             ],
@@ -141,6 +148,15 @@ else:
 # --- Users and passwords --------------------------------------------------------
 
 AUTH_USER_MODEL = "accounts.User"
+
+# Argon2, the hasher Django recommends. The others only check existing passwords made
+# with them, and those are re-hashed with Argon2 at the user's next login.
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -197,6 +213,32 @@ if env.bool("DJANGO_BEHIND_PROXY", default=False):
 X_FRAME_OPTIONS = "DENY"  # never allow this site inside a frame
 SECURE_REFERRER_POLICY = "same-origin"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
+
+# Content Security Policy (Django's built-in one, so there's no extra package to keep
+# updated): the browser only loads what's listed below and blocks everything else, such
+# as code injected into a page. Scripts and styles come from this site, plus inline ones
+# that carry the page's nonce (<script nonce="{{ csp_nonce }}">). Anything not listed
+# (frames, audio and video, workers, manifests) falls back to default-src: nothing, until
+# a project allows it on purpose. A view that needs more can set its own policy with
+# csp_override from django.views.decorators.csp; see the README's Security section.
+SECURE_CSP = {
+    "default-src": [CSP.NONE],
+    "script-src": [CSP.SELF, CSP.NONCE],
+    "style-src": [CSP.SELF, CSP.NONCE],
+    "img-src": [CSP.SELF],
+    "font-src": [CSP.SELF],
+    "connect-src": [CSP.SELF],
+    "object-src": [CSP.NONE],
+    "base-uri": [CSP.SELF],
+    "form-action": [CSP.SELF],
+    "frame-ancestors": [CSP.NONE],  # the same as X_FRAME_OPTIONS, for newer browsers
+}
+if IS_DEVELOPMENT:
+    # Report only: Django's yellow debug pages use inline styles without the nonce, so
+    # an enforced policy would break them. Anything the policy would block still shows
+    # as a warning in the browser console. Tests and production enforce it.
+    SECURE_CSP_REPORT_ONLY = SECURE_CSP
+    SECURE_CSP = {}
 
 
 # --- Logging ----------------------------------------------------------------------
