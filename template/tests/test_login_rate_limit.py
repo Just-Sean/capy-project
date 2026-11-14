@@ -95,11 +95,13 @@ def test_a_faked_forwarded_header_doesnt_help_when_not_behind_a_proxy(client, st
 @override_settings(BEHIND_PROXY=True)
 def test_behind_a_proxy_only_the_address_it_adds_counts(client, staff):
     # The proxy adds the real address last; anything before it came from the visitor.
+    proxy = "10.1.0.1"
     for attempt in range(LIMIT):
-        log_in(client, "wrong-password", ip="10.1.0.1", HTTP_X_FORWARDED_FOR=f"1.2.3.{attempt}, 203.0.113.5")
-    locked = log_in(client, PASSWORD, ip="10.1.0.1", HTTP_X_FORWARDED_FOR="9.9.9.9, 203.0.113.5")
+        faked = f"1.2.3.{attempt}, 203.0.113.5"
+        log_in(client, "wrong-password", ip=proxy, HTTP_X_FORWARDED_FOR=faked)
+    locked = log_in(client, PASSWORD, ip=proxy, HTTP_X_FORWARDED_FOR="9.9.9.9, 203.0.113.5")
     assert locked.status_code == LOCKED
-    other = log_in(client, PASSWORD, ip="10.1.0.1", HTTP_X_FORWARDED_FOR="203.0.113.6")
+    other = log_in(client, PASSWORD, ip=proxy, HTTP_X_FORWARDED_FOR="203.0.113.6")
     assert other.status_code == LOGGED_IN
 
 
