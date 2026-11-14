@@ -70,8 +70,8 @@ INSTALLED_APPS = [
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
-    # Before staticfiles: runserver then serves static files through WhiteNoise, the
-    # same way production does, instead of Django's own development server.
+    # Before staticfiles: stops runserver serving static files itself, so WhiteNoise
+    # serves them in development too, with the same headers (including the CSP).
     "whitenoise.runserver_nostatic",
     "django.contrib.staticfiles",
 ]
@@ -80,7 +80,8 @@ MIDDLEWARE = [
     "config.middleware.healthz",  # first: answers /healthz before host checks or the database
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.csp.ContentSecurityPolicyMiddleware",  # sends SECURE_CSP below
-    "whitenoise.middleware.WhiteNoiseMiddleware",  # static files, right after security
+    # Static files, right after the security headers, so they carry them (and the CSP) too.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -213,15 +214,18 @@ X_FRAME_OPTIONS = "DENY"  # never allow this site inside a frame
 SECURE_REFERRER_POLICY = "same-origin"
 SECURE_CROSS_ORIGIN_OPENER_POLICY = "same-origin"
 
-# Content Security Policy: the browser only runs scripts and styles from this site, plus
-# inline ones that carry the page's nonce (<script nonce="{{ csp_nonce }}">). Anything
-# else, such as code injected into a page, is blocked. A view that needs more (e.g. an
-# external map or video) can loosen it for itself with django.views.decorators.csp.
+# Content Security Policy (Django's built-in one, so there's no extra package to keep
+# updated): the browser only loads what's listed below and blocks everything else, such
+# as code injected into a page. Scripts and styles come from this site, plus inline ones
+# that carry the page's nonce (<script nonce="{{ csp_nonce }}">). Anything not listed
+# (frames, audio and video, workers, manifests) falls back to default-src: nothing, until
+# a project allows it on purpose. A view that needs more can set its own policy with
+# csp_override from django.views.decorators.csp; see the README's Security section.
 SECURE_CSP = {
-    "default-src": [CSP.SELF],
+    "default-src": [CSP.NONE],
     "script-src": [CSP.SELF, CSP.NONCE],
     "style-src": [CSP.SELF, CSP.NONCE],
-    "img-src": [CSP.SELF, "data:"],
+    "img-src": [CSP.SELF],
     "font-src": [CSP.SELF],
     "connect-src": [CSP.SELF],
     "object-src": [CSP.NONE],
@@ -229,6 +233,12 @@ SECURE_CSP = {
     "form-action": [CSP.SELF],
     "frame-ancestors": [CSP.NONE],  # the same as X_FRAME_OPTIONS, for newer browsers
 }
+if IS_DEVELOPMENT:
+    # Report only: Django's yellow debug pages use inline styles without the nonce, so
+    # an enforced policy would break them. Anything the policy would block still shows
+    # as a warning in the browser console. Tests and production enforce it.
+    SECURE_CSP_REPORT_ONLY = SECURE_CSP
+    SECURE_CSP = {}
 
 
 # --- Logging ----------------------------------------------------------------------

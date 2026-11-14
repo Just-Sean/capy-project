@@ -1,26 +1,41 @@
-"""Every response carries the security headers, passwords use Argon2, and the strict
-Content Security Policy doesn't break the pages the project ships (the admin)."""
+"""Every response (except /healthz) carries the security headers, passwords use Argon2,
+and the strict Content Security Policy doesn't break the pages the project ships: the
+admin and, in development, Django's debug pages."""
 
 import re
 
 import pytest
 from django.conf import settings
+from django.test import override_settings
 
 from tests.test_production_settings import run_manage
 
-ADMIN_LOGIN = f"/{settings.ADMIN_URL}login/"
+ADMIN = f"/{settings.ADMIN_URL}"
+NONCE = "'nonce-…'"  # stands in for the per-response nonce when comparing policies
 
-# A <script> with neither src= nor nonce=: inline code the CSP would block.
-INLINE_SCRIPT = re.compile(r"<script(?![^>]*\b(?:src|nonce)=)[^>]*>", re.IGNORECASE)
-# A style="..." attribute: blocked by the CSP (it has no nonce).
-STYLE_ATTRIBUTE = re.compile(r"\sstyle\s*=", re.IGNORECASE)
+# The whole policy. Any change to SECURE_CSP has to be made here too, on purpose.
+EXPECTED_POLICY = {
+    "default-src": ["'none'"],
+    "script-src": ["'self'", NONCE],
+    "style-src": ["'self'", NONCE],
+    "img-src": ["'self'"],
+    "font-src": ["'self'"],
+    "connect-src": ["'self'"],
+    "object-src": ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+    "frame-ancestors": ["'none'"],
+}
 
-
-@pytest.fixture
-def login_page(client):
-    response = client.get(ADMIN_LOGIN)
-    assert response.status_code == 200
-    return response
+# Inline code the CSP would block: <script> or <style> without a nonce (or a src),
+# style="..." attributes, onclick=-style handlers and javascript: links.
+BLOCKED = {
+    "inline script": re.compile(r"<script(?![^>]*\b(?:src|nonce)=)[^>]*>", re.IGNORECASE),
+    "inline style": re.compile(r"<style(?![^>]*\bnonce=)[^>]*>", re.IGNORECASE),
+    "style attribute": re.compile(r"\sstyle\s*=", re.IGNORECASE),
+    "event handler": re.compile(r"\son[a-z]+\s*=", re.IGNORECASE),
+    "javascript: link": re.compile(r"javascript:", re.IGNORECASE),
+}
 
 
 def directives(header):
@@ -32,44 +47,108 @@ def directives(header):
     return parsed
 
 
-@pytest.mark.django_db
-def test_every_page_sends_the_security_headers(login_page):
-    assert login_page["X-Frame-Options"] == "DENY"
-    assert login_page["X-Content-Type-Options"] == "nosniff"
-    assert login_page["Referrer-Policy"] == "same-origin"
-    assert login_page["Cross-Origin-Opener-Policy"] == "same-origin"
-    assert "Content-Security-Policy" in login_page
+def without_nonce(policy):
+    nonce = re.compile(r"'nonce-[\w+/=-]+'")
+    return {name: [NONCE if nonce.fullmatch(s) else s for s in v] for name, v in policy.items()}
+
+
+def blocked_in(html):
+    """What in this HTML the CSP would block, by kind; empty when nothing would be."""
+    found = {name: pattern.findall(html) for name, pattern in BLOCKED.items()}
+    return {name: matches for name, matches in found.items() if matches}
+
+
+def last_line(result):
+    return result.stdout.strip().splitlines()[-1]
 
 
 @pytest.mark.django_db
-def test_the_csp_allows_only_this_site_and_nonced_inline_code(login_page):
-    policy = directives(login_page["Content-Security-Policy"])
-    assert policy["default-src"] == ["'self'"]
-    for kind in ["script-src", "style-src"]:
-        assert policy[kind][0] == "'self'"
-        assert re.fullmatch(r"'nonce-[\w+/=-]+'", policy[kind][1])
-        assert "'unsafe-inline'" not in policy[kind]
-    assert policy["object-src"] == ["'none'"]
-    assert policy["frame-ancestors"] == ["'none'"]
+@pytest.mark.parametrize(
+    ("path", "status"),
+    [(f"{ADMIN}login/", 200), ("/no-such-page/", 404), ("/static/admin/css/base.css", 200)],
+    ids=["page", "not found", "static file"],
+)
+def test_responses_send_the_security_headers(client, path, status):
+    response = client.get(path)
+    assert response.status_code == status
+    if not path.startswith("/static/"):
+        # WhiteNoise answers before it's added; a static file can't frame anything, and
+        # the CSP's frame-ancestors covers framing anyway.
+        assert response["X-Frame-Options"] == "DENY"
+    assert response["X-Content-Type-Options"] == "nosniff"
+    assert response["Referrer-Policy"] == "same-origin"
+    assert response["Cross-Origin-Opener-Policy"] == "same-origin"
+    assert "Content-Security-Policy" in response
+
+
+@pytest.mark.django_db
+def test_the_csp_is_exactly_the_strict_policy(client):
+    policy = directives(client.get(f"{ADMIN}login/")["Content-Security-Policy"])
+    assert without_nonce(policy) == EXPECTED_POLICY
 
 
 @pytest.mark.django_db
 def test_each_response_gets_a_new_nonce(client):
-    first = directives(client.get(ADMIN_LOGIN)["Content-Security-Policy"])
-    second = directives(client.get(ADMIN_LOGIN)["Content-Security-Policy"])
+    first = directives(client.get(f"{ADMIN}login/")["Content-Security-Policy"])
+    second = directives(client.get(f"{ADMIN}login/")["Content-Security-Policy"])
     assert first["script-src"][1] != second["script-src"][1]
 
 
 @pytest.mark.django_db
-def test_the_admin_has_nothing_the_csp_would_block(admin_client, login_page):
-    # admin_client is logged in as a superuser, so this covers the admin's main pages.
-    pages = [login_page, admin_client.get(f"/{settings.ADMIN_URL}")]
-    pages.append(admin_client.get(f"/{settings.ADMIN_URL}accounts/user/"))
-    for page in pages:
-        assert page.status_code == 200
-        html = page.content.decode()
-        assert INLINE_SCRIPT.findall(html) == []
-        assert STYLE_ATTRIBUTE.findall(html) == []
+def test_the_admin_has_nothing_the_csp_would_block(client, admin_client, admin_user):
+    pages = {
+        "login": client.get(f"{ADMIN}login/"),
+        "index": admin_client.get(ADMIN),
+        "user list": admin_client.get(f"{ADMIN}accounts/user/"),
+        "add user": admin_client.get(f"{ADMIN}accounts/user/add/"),
+        "change user": admin_client.get(f"{ADMIN}accounts/user/{admin_user.pk}/change/"),
+        "change password": admin_client.get(f"{ADMIN}password_change/"),
+    }
+    for name, page in pages.items():
+        assert page.status_code == 200, name
+        assert blocked_in(page.content.decode()) == {}, name
+
+
+def test_development_reports_the_csp_instead_of_enforcing_it():
+    # Django's yellow debug pages use inline styles; development only reports what the
+    # policy would block, so they keep working. Tests and production enforce it.
+    result = run_manage(
+        "shell",
+        "-c",
+        "from django.conf import settings as s; "
+        "print(s.SECURE_CSP == {}, [str(v) for v in s.SECURE_CSP_REPORT_ONLY['default-src']])",
+        DJANGO_ENV="development",
+    )
+    assert last_line(result) == "True [\"'none'\"]", result.stderr
+
+
+@pytest.mark.django_db
+@override_settings(DEBUG=True)
+def test_the_debug_page_is_what_development_has_to_allow(client):
+    # Proves why development is report-only: this would be blocked if enforced.
+    page = client.get("/no-such-page/")
+    assert "inline style" in blocked_in(page.content.decode())
+
+
+@pytest.mark.django_db
+@override_settings(SECURE_HSTS_SECONDS=31536000, SECURE_HSTS_INCLUDE_SUBDOMAINS=True)
+def test_hsts_is_sent_over_https_only(client):
+    assert client.get(f"{ADMIN}login/", secure=True)["Strict-Transport-Security"] == (
+        "max-age=31536000; includeSubDomains"
+    )
+    assert "Strict-Transport-Security" not in client.get(f"{ADMIN}login/")
+
+
+def test_production_sends_hsts_for_a_year_without_preloading():
+    # Preloading is a per-project opt-in (see the README), so its warning stays silenced.
+    assert "security.W021" in settings.SILENCED_SYSTEM_CHECKS
+    result = run_manage(
+        "shell",
+        "-c",
+        "from django.conf import settings as s; "
+        "print(s.SECURE_HSTS_SECONDS, s.SECURE_HSTS_INCLUDE_SUBDOMAINS, s.SECURE_HSTS_PRELOAD)",
+    )
+    assert last_line(result) == "31536000 True False", result.stderr
 
 
 def test_production_hashes_passwords_with_argon2():
@@ -79,27 +158,20 @@ def test_production_hashes_passwords_with_argon2():
         "from django.contrib.auth.hashers import get_hasher, identify_hasher, make_password; "
         "print(get_hasher().algorithm, identify_hasher(make_password('x')).algorithm)",
     )
-    assert result.stdout.strip().splitlines()[-1] == "argon2 argon2", result.stderr
+    assert last_line(result) == "argon2 argon2", result.stderr
 
 
-def test_older_password_hashes_still_work_and_get_upgraded():
-    # Django re-hashes with the first hasher whenever a password checks against another.
-    hashers = run_manage(
-        "shell", "-c", "from django.conf import settings as s; print(s.PASSWORD_HASHERS)"
-    )
-    listed = hashers.stdout.strip().splitlines()[-1]
-    assert listed.startswith("['django.contrib.auth.hashers.Argon2PasswordHasher'"), hashers.stderr
-    assert "PBKDF2PasswordHasher" in listed
-
-
-def test_production_sends_hsts_for_a_year_without_preloading():
+def test_an_older_password_hash_still_works_and_gets_upgraded():
+    # check_password calls the setter (which saves a new hash) when the stored hash
+    # wasn't made with the first hasher, Argon2.
     result = run_manage(
         "shell",
         "-c",
-        "from django.conf import settings as s; "
-        "print(s.SECURE_HSTS_SECONDS, s.SECURE_HSTS_INCLUDE_SUBDOMAINS, s.SECURE_HSTS_PRELOAD)",
+        "from django.contrib.auth.hashers import check_password, make_password; "
+        "old = make_password('secret-1', hasher='pbkdf2_sha256'); upgraded = []; "
+        "print(check_password('secret-1', old, setter=upgraded.append), upgraded == ['secret-1'])",
     )
-    assert result.stdout.strip().splitlines()[-1] == "31536000 True False", result.stderr
+    assert last_line(result) == "True True", result.stderr
 
 
 def test_development_serves_static_files_like_production():
