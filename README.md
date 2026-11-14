@@ -39,3 +39,22 @@ Tag starter releases (`git tag v0.2.0`) so projects update to a known version.
   `.jinja` ending: git reads any file named `.gitignore`, even inside `template/`, and
   its `.env*` rule would stop git tracking `template/.env.example.jinja`.
   (`.dockerignore` doesn't need this, because git doesn't read it.)
+- The starter has its own `.gitignore` (every `.env…` file except
+  `template/.env.example.jinja`, plus `.venv/` and Python caches) and its own
+  `.pre-commit-config.yaml`, which runs gitleaks on every commit. Its gitleaks version
+  is pinned to the same commit as the template's hook: update both together.
+
+Set up the commit check once, after cloning:
+
+```bash
+uv tool install pre-commit      # once per machine
+pre-commit install              # once per clone
+```
+
+If gitleaks blocks a commit, remove the secret instead of skipping the check (never
+`git commit --no-verify`). To scan every file and the whole history:
+
+```bash
+docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f dir /repo --redact   # every file
+docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f git /repo --redact   # the whole history
+```

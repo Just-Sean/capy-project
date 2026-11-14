@@ -1,0 +1,13 @@
+# The starter repo's own ignore list. (New projects get template/.gitignore.jinja.)
+
+# Secrets: every file whose name starts with .env, in any folder, except the template's
+# example (template/.env.example.jinja).
+.env*
+!.env.example.jinja
+
+# Python and tool caches, e.g. from trying things out inside template/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/

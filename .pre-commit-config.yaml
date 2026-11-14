@@ -1,0 +1,9 @@
+# The starter repo's own commit check (new projects get template/.pre-commit-config.yaml).
+# Set up once: `uv tool install pre-commit`, then `pre-commit install` (see the README).
+repos:
+  # Blocks commits that contain passwords, keys or tokens. Pinned to the same exact
+  # commit as the template's hook; update both together.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
+    hooks:
+      - id: gitleaks
