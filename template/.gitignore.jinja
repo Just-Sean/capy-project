@@ -10,7 +10,8 @@ __pycache__/
 .coverage.*
 htmlcov/
 
-# Secrets: every .env file (.env, .env.local, .env.production, ...) except the example
+# Secrets: every file whose name starts with .env (.env, .env.local, .envrc, ...), in
+# any folder, except the example. To commit another one, add a "!" line for it.
 .env*
 !.env.example
 
