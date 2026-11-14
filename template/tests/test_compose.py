@@ -1,10 +1,10 @@
 """The compose files: development stays on this machine, production keeps its secrets in
-env files, migrates before the app starts, runs locked down, limits every container's
-logs, and shuts down gracefully.
+env files, migrates before the app starts, runs locked down behind Caddy, limits every
+container's logs, and shuts down gracefully.
 Redis is a cache only: nothing on disk, a memory limit, and internal in production.
 
 `docker compose config` merges the files exactly as `docker compose up` would, without
-starting anything or needing the Docker daemon.
+starting anything or needing the Docker daemon. (tests/test_caddy.py runs Caddy itself.)
 """
 
 import json
@@ -164,32 +164,19 @@ def test_caddy_serves_the_uploads_read_only_and_keeps_its_certificates(project):
     mounts = {volume["target"]: volume for volume in caddy["volumes"]}
     assert mounts["/srv/media"]["source"] == "media" and mounts["/srv/media"]["read_only"]
     assert mounts["/data"]["type"] == "volume"  # certificates survive a restart
-    assert mounts["/etc/caddy/Caddyfile"]["read_only"]
-    assert caddy["depends_on"]["web"]["condition"] == "service_healthy"
+    # Folders, not single files: a mounted file stays the old copy after git replaces it.
+    for target in ["/etc/caddy", "/srv/errors"]:
+        assert mounts[target]["type"] == "bind" and mounts[target]["read_only"]
+    # Not waiting for a healthy app: the error page shows even if the app can't start.
+    assert caddy["depends_on"]["web"]["condition"] == "service_started"
+    assert "127.0.0.1:2019" in " ".join(caddy["healthcheck"]["test"])
 
 
-def test_the_caddyfile_is_valid(project):
-    # Caddy's own check, with the pinned image and the production site address.
-    caddy = config(project, *PRODUCTION)["services"]["caddy"]
-    result = subprocess.run(
-        [
-            shutil.which("docker") or "docker",
-            "run",
-            "--rm",
-            "--env",
-            "SITE_ADDRESS=example.com",
-            "--volume",
-            f"{PROJECT_DIR / 'deploy' / 'Caddyfile'}:/etc/caddy/Caddyfile:ro",
-            caddy["image"],
-            "caddy",
-            "validate",
-            "--config",
-            "/etc/caddy/Caddyfile",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
+def test_the_apps_tmp_in_memory_has_a_size_limit(project):
+    # Django keeps an upload being received in /tmp, which is in memory.
+    services = config(project, *PRODUCTION)["services"]
+    for name in APP_SERVICES:
+        assert services[name]["tmpfs"] == ["/tmp:size=64m"]
 
 
 def test_the_database_and_redis_are_only_on_an_internal_network(project):

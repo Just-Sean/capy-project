@@ -44,10 +44,12 @@ errorlog = "-"
 # tokens (signed links, API keys) that shouldn't sit in logs. Behind the reverse proxy
 # (DJANGO_BEHIND_PROXY), the visitor's address is the X-Forwarded-For the proxy sets;
 # otherwise it's the connection's.
-# (Written as one expression: every name in this file must be a Gunicorn setting.)
+# Requests that don't come through the proxy (Docker's health check) show "-". The true
+# values are the ones Django's settings accept (django-environ's), so the two always
+# agree. (Written as one expression: every name in this file must be a Gunicorn setting.)
 access_log_format = (
     "%({x-forwarded-for}i)s"
-    if os.environ.get("DJANGO_BEHIND_PROXY", "").lower() in {"true", "1", "yes", "on"}
+    if os.environ.get("DJANGO_BEHIND_PROXY", "").lower() in {"true", "on", "ok", "y", "yes", "1"}
     else "%(h)s"
 ) + ' "%(m)s %(U)s" %(s)s %(B)s %(M)sms "%(a)s"'
 # Both logs as one JSON object per line, like the app's own (config/logging.py). The

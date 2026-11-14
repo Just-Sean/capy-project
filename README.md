@@ -67,7 +67,8 @@ hand. Changes so far that need this:
   exactly what it lists.
 - **Login rate limiting:** run `uv run python manage.py migrate` (django-axes adds its
   tables; production's `migrate` step does this by itself). Behind a reverse proxy,
-  set `DJANGO_BEHIND_PROXY=true` and check the proxy adds the visitor's address to
+  set `DJANGO_BEHIND_PROXY=true` (with the starter's Caddy, `compose.prod.yaml` sets it
+  for you) and check the proxy adds the visitor's address to
   `X-Forwarded-For` (see the project README), or every visitor shares the proxy's
   address. Tests that use `client.login(...)` must switch to
   `client.force_login(user)`.
@@ -77,13 +78,20 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
-- **Caddy in front:** production now runs Caddy, which handles HTTPS, so make
-  `.env.caddy` with `SITE_ADDRESS=your.domain` (see the project README's Production
-  section), point the domain's DNS at the server and open ports 80 and 443. The app is
-  no longer published on `127.0.0.1:8000`: if you ran your own reverse proxy in front
-  of it, stop it (Caddy needs ports 80 and 443), or keep yours and remove the `caddy`
-  service. `DJANGO_BEHIND_PROXY` is now set by `compose.prod.yaml`, so you can remove it
-  from `.env.production`.
+- **Caddy in front:** production now runs Caddy, which handles HTTPS. Make `.env.caddy`:
+  `SITE_ADDRESS=localhost` for the local check (`compose.local-http.yaml` replaces it),
+  or `SITE_ADDRESS=your.domain` on a server, where you also point the domain's DNS at
+  the server and open ports 80 and 443 (see the project README's Production section).
+  The app is no longer published on `127.0.0.1:8000`. If you ran your own reverse
+  proxy, either stop it (Caddy needs ports 80 and 443), or keep it: remove the `caddy`
+  service and put back `ports: ["127.0.0.1:8000:8000"]` under `web` in
+  `compose.prod.yaml` (later `copier update` runs will show these as conflicts); your
+  proxy must then set `X-Forwarded-Proto` and add the visitor's address as the last
+  `X-Forwarded-For` entry, because the app now always runs with
+  `DJANGO_BEHIND_PROXY=true`, which `compose.prod.yaml` sets (remove it from
+  `.env.production`). Requests over 10 MB are now refused, and local uploads are served
+  publicly by Caddy: see the project README's Uploaded files section if some are
+  private. The next deploy recreates every container, and with them the logs.
 - **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
   it), with `base.html`, the error pages and `proxy_error.html`. If your project already
   has its own root `templates/` folder, `copier update` shows a conflict for each file

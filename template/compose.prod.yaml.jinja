@@ -34,7 +34,9 @@ x-app: &app
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
   read_only: true
-  tmpfs: [/tmp]
+  # /tmp is in memory: capped, so large uploads (Django keeps one being received there)
+  # can't use up the server's memory. Caddy refuses requests over 10 MB anyway.
+  tmpfs: ["/tmp:size=64m"]
   networks: [backend]
   logging: *logging
 
@@ -129,6 +131,8 @@ services:
   # and the site's own page when the app doesn't answer. See deploy/Caddyfile. The only
   # service the internet reaches. Locked down: no Linux capabilities except binding ports
   # 80 and 443, no way to gain privileges, a read-only filesystem apart from its volumes.
+  # (The official image runs as root inside the container; with no other capabilities,
+  # that root can't do more than read and write its own files.)
   caddy:
     image: caddy:2.11.9-alpine
     env_file: .env.caddy
@@ -138,16 +142,27 @@ services:
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
+    # Started once the app has started, not waiting for it to be healthy: if the app
+    # can't start, visitors still get the error page instead of no answer at all.
     depends_on:
       web:
-        condition: service_healthy
+        condition: service_started
+    healthcheck:
+      # Caddy's admin API answers only inside the container (127.0.0.1: "localhost" would
+      # try IPv6 first, where it doesn't listen).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
     ports:
       - "80:80"                        # plain HTTP: redirects to HTTPS, and certificate checks
       - "443:443"                      # HTTPS
       - "443:443/udp"                  # HTTPS over HTTP/3
     volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./templates/proxy_error.html:/srv/errors/proxy_error.html:ro
+      # Folders, not single files: a single file stays the old copy in a running
+      # container after git or copier replaces it.
+      - ./deploy:/etc/caddy:ro         # the Caddyfile
+      - ./templates:/srv/errors:ro     # proxy_error.html (the only file it serves from here)
       - media:/srv/media:ro            # the uploaded files, to serve them
       - caddy_data:/data               # certificates and keys: keep, or Caddy asks again
       - caddy_config:/config

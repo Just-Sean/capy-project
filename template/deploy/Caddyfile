@@ -1,37 +1,67 @@
 # The reverse proxy in front of the app: compose.prod.yaml's caddy service. It gets and
 # renews HTTPS certificates for SITE_ADDRESS (from .env.caddy) by itself, and redirects
-# plain HTTP to HTTPS.
+# plain HTTP to HTTPS. After changing this file, restart Caddy (see the README).
 {
 	# Caddy's admin API, which can change this configuration, answers only inside the
-	# container.
-	admin localhost:2019
+	# container (its health check uses it).
+	admin 127.0.0.1:2019
+	# Not one log line per health check (the admin API logs each request it gets).
+	log default {
+		exclude admin.api
+	}
 }
 
 # The basic security headers on what Caddy serves itself (uploads, the error page). "?"
-# adds each only when the app hasn't set it already. No "Server: Caddy" header.
+# adds each only when the app hasn't set it already. HSTS is left to the app's own
+# setting (DJANGO_SECURE_HSTS_SECONDS), so there's one place to change it. No "Server" or
+# "Via" header naming Caddy.
 (security_headers) {
 	header {
 		?X-Content-Type-Options nosniff
 		?X-Frame-Options DENY
 		?Referrer-Policy same-origin
 		-Server
+		-Via
 	}
 }
 
 {$SITE_ADDRESS} {
 	import security_headers
 
-	# The health checks are for Docker and load balancers, which call the app directly
-	# on the server, not for the public: anyone could see when the database is down.
-	# (A handle block: Caddy runs handle blocks before a bare respond.)
+	# One line per request Caddy answers itself (uploads, hidden health checks, the error
+	# page), as JSON on stdout like the app's logs, without query strings (they can hold
+	# tokens). Requests the app answers are skipped below: the app logs those.
+	log {
+		output stdout
+		format filter {
+			wrap json
+			fields {
+				request>uri regexp \?.* ""
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+
+	# The largest request accepted: bigger ones get 413 before reaching the app. Raise it
+	# if the project takes bigger uploads (Django keeps an upload being received in the
+	# app's /tmp, in memory: raise its size in compose.prod.yaml too).
+	request_body {
+		max_size 10MB
+	}
+
+	# The health checks are for Docker and load balancers on the server, not for the
+	# public: anyone could see when the database is down. (Inside a handle block: Caddy
+	# runs handle blocks before a bare respond, so a bare one would never be reached.)
 	@health path /healthz /readyz
 	handle @health {
 		respond 404
 	}
 
 	# Uploaded files, straight from the media volume (when DJANGO_MEDIA_STORAGE is the
-	# default, filesystem). Always as downloads, never shown as pages: an uploaded HTML or
-	# SVG file can't run scripts on this site.
+	# default, filesystem). Must match MEDIA_URL in config/settings/files.py. Always as
+	# downloads, never shown as pages: an uploaded HTML or SVG file can't run scripts on
+	# this site. No folder listings, and no index.html served for a folder's address.
 	handle_path /media/* {
 		root * /srv/media
 		header {
@@ -39,17 +69,24 @@
 			X-Content-Type-Options nosniff
 			Content-Security-Policy "default-src 'none'; sandbox"
 		}
-		file_server
+		file_server {
+			index ""
+		}
 	}
 
 	handle {
+		log_skip
 		reverse_proxy web:8000 {
-			# Caddy takes in the whole request (up to this size) before passing it on,
-			# and takes the response from the app at once, so a slow visitor ties up
-			# Caddy, which handles many at a time, instead of one of Gunicorn's few
-			# workers.
-			request_buffers 4MB
-			response_buffers 4MB
+			# Caddy takes in the first 1 MB of each request before passing it on (bigger
+			# ones pass on as they arrive; the limit above caps them), and up to 1 MB of
+			# each response at once, so a slow visitor ties up Caddy, which handles many
+			# at a time, instead of one of Gunicorn's few workers.
+			request_buffers 1MB
+			response_buffers 1MB
+			# While the app restarts (a deploy), keep trying for a few seconds before
+			# showing the error page.
+			lb_try_duration 10s
+			lb_try_interval 250ms
 		}
 	}
 
