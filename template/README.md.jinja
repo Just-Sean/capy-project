@@ -47,6 +47,12 @@ the production image, installs exactly the same thing. Commit it whenever it cha
 per topic, shared by every environment, and any individual setting can still be
 overridden by its own environment variable.
 
+Add a new setting to the file for its topic; a setting may be set in only one file (a
+test checks this). Where a setting differs in tests, it's changed next to the setting
+itself. For a new topic, create `config/settings/<topic>.py`, add it to the import and
+the list in `config/settings/__init__.py`, and to `TOPICS` in
+`tests/test_settings_package.py` (a test fails until both are done).
+
 | `DJANGO_ENV` | Set by | Defaults |
 | --- | --- | --- |
 | `development` | `.env` on your machine | Debug on, plain HTTP, local secret key, `admin/` |
@@ -267,8 +273,9 @@ docker compose -f compose.yaml -f compose.prod.yaml down -v   # DELETES producti
 
 ## Security
 
-These are set in `config/settings/` (mostly `security.py` and `users.py`) and apply to
-every environment unless noted.
+Passwords and login rate limiting are set in `config/settings/users.py`; HTTPS, HSTS, the
+headers and the CSP in `config/settings/security.py`. They apply to every environment
+unless noted.
 
 - **Passwords** are hashed with Argon2 (tests use a fast hasher instead). Passwords saved
   with an older hasher still work, and are re-hashed with Argon2 the next time that user
@@ -418,7 +425,7 @@ uv run pytest --cov
 
 | Path | Purpose |
 | --- | --- |
-| `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py`, `database.py` (and the cache), `users.py` (passwords, login limits), `files.py`, `security.py`, `logs.py`. `__init__.py` combines them; each keeps its own test-only tweaks |
+| `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
 | `config/urls.py` | The root URL map; each app adds its URLs here |
 | `config/middleware.py` | Answers `/healthz` before anything else runs |
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |
@@ -427,7 +434,7 @@ uv run pytest --cov
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
-| `tests/test_settings_package.py` | Proves every topic file's settings reach Django and no two topic files set the same name |
+| `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |

@@ -17,7 +17,19 @@ Each topic module keeps its own test-only adjustments next to the settings they 
 This file only combines them: Django reads every UPPERCASE name defined here.
 """
 
+from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
+
 from . import core, database, environment, files, logs, security, users
+
+# A config/settings.py left over from before the split (e.g. after `copier update`) would
+# be silently ignored, so anything still in it would stop working without a sign.
+if (Path(__file__).resolve().parent.parent / "settings.py").exists():
+    raise ImproperlyConfigured(
+        "config/settings.py is no longer used: move your changes into the matching file "
+        "in config/settings/, then delete config/settings.py."
+    )
 
 for _topic in (environment, core, database, users, files, security, logs):
     globals().update({name: value for name, value in vars(_topic).items() if name.isupper()})
