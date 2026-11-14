@@ -1,31 +1,30 @@
 """Production must be secure and must refuse to start when misconfigured.
 
 Each test runs manage.py in a separate process with a production-style
-environment (no .env file, no DJANGO_ENV, so production), exactly as a server would.
+environment (no .env file, no DJANGO_ENV, so production), as a server would, except
+that Django deprecation warnings are errors, as in the rest of the tests.
 """
 
 import os
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
 from django.conf import settings
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-# pytest's own warning filters (pyproject.toml) also apply in every manage.py process,
-# so a deprecated Django feature fails there too. Each is "error::<warning class>".
-PYPROJECT = tomllib.loads((PROJECT_DIR / "pyproject.toml").read_text())
-WARNING_FILTERS = PYPROJECT["tool"]["pytest"]["ini_options"]["filterwarnings"]
-ERROR_CLASSES = [rule.removeprefix("error::") for rule in WARNING_FILTERS]
-# Python's own -W option can't name Django's warning classes (it reads them before
-# Django can be imported), so this starts manage.py after setting the filters itself.
+# pytest's warning rules (filterwarnings in pyproject.toml) don't reach the manage.py
+# processes run_manage starts, so it makes Django's deprecation warnings errors there
+# too (tests/test_deprecation_warnings.py checks both). Python's own -W option can't
+# name Django's warning classes, so this starts manage.py after setting the rules, with
+# the same sys.path and sys.argv that `python manage.py` would have.
 MANAGE_WITH_WARNINGS_AS_ERRORS = (
-    "import runpy, sys, warnings\n"
-    "from django.utils.module_loading import import_string\n"
-    "for path in sys.argv.pop(1).split(','):\n"
-    "    warnings.filterwarnings('error', category=import_string(path))\n"
+    "import os, runpy, sys, warnings\n"
+    "from django.utils import deprecation\n"
+    "warnings.simplefilter('error', deprecation.RemovedInNextVersionWarning)\n"
+    "warnings.simplefilter('error', deprecation.RemovedAfterNextVersionWarning)\n"
+    "sys.path[0] = os.getcwd()\n"
     "sys.argv[0] = 'manage.py'\n"
     "runpy.run_path('manage.py', run_name='__main__')\n"
 )
@@ -51,9 +50,8 @@ def run_manage(*args, **env_changes):
     coverage = {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
     env = {"PATH": os.environ["PATH"], **coverage, **PRODUCTION_ENV, **env_changes}
     env = {key: value for key, value in env.items() if value is not None}
-    error_classes = ",".join(ERROR_CLASSES)
     return subprocess.run(
-        [sys.executable, "-c", MANAGE_WITH_WARNINGS_AS_ERRORS, error_classes, *args],
+        [sys.executable, "-c", MANAGE_WITH_WARNINGS_AS_ERRORS, *args],
         cwd=PROJECT_DIR,
         env=env,
         capture_output=True,

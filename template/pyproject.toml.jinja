@@ -37,10 +37,12 @@ env = ["DJANGO_ENV=test"]
 addopts = "--strict-markers"
 python_files = ["tests.py", "test_*.py"]   # Django-style tests.py plus tests/test_*.py
 # Fail on every Django deprecation warning, wherever it's raised, so upgrades never
-# surprise you: features removed in the next version and in the one after it (Django
-# names the classes by version; these two names always point at the current ones).
-# Tests that run manage.py in their own process get the same list (see
-# tests/test_production_settings.py), and tests/test_deprecation_warnings.py checks both.
+# surprise you: features removed in the next version and in the one after it. (Django's
+# version-numbered class names change with each release; these two names stay the same
+# and always mean the current ones.) Tests that run manage.py in their own process set
+# the same two rules there (tests/test_production_settings.py), and
+# tests/test_deprecation_warnings.py checks both. Other libraries' deprecations don't
+# fail the tests: you can't fix their code.
 filterwarnings = [
     "error::django.utils.deprecation.RemovedInNextVersionWarning",
     "error::django.utils.deprecation.RemovedAfterNextVersionWarning",
