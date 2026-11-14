@@ -2,7 +2,7 @@
 
 Uploads are private by default ("default" storage): only config/uploads.py's view hands
 them out, to those it allows. Files anyone may see use the "public" storage instead:
-FileField(storage=storages["public"]).
+FileField(storage=public_storage), from config/uploads.py.
 """
 
 from urllib.parse import urlsplit
@@ -17,10 +17,6 @@ MEDIA_URL = "media/"  # private uploads' addresses: config/uploads.py checks eac
 MEDIA_ROOT = BASE_DIR / "media"  # private uploads, when they're stored locally
 PUBLIC_MEDIA_URL = "/media-public/"  # public uploads: served to anyone
 PUBLIC_MEDIA_ROOT = BASE_DIR / "media-public"
-# With Docker, Caddy sends a private file once the view has allowed it (X-Accel-Redirect),
-# so no Gunicorn worker is tied up streaming it; compose.prod.yaml turns this on.
-# Without a proxy set up for it, Django sends the file itself.
-MEDIA_SENT_BY_PROXY = env.bool("DJANGO_MEDIA_SENT_BY_PROXY", default=False)
 
 STORAGES = {
     # Compressed, cache-busting file names (app.3f9a1c.css) in production.
@@ -68,8 +64,9 @@ elif media_storage == "s3":
         # file can't run scripts in the browser.
         "object_parameters": {"ContentDisposition": "attachment"},
     }
-    # Both under their own folder in the bucket, both with signed links: the app only
-    # hands a private file's link to those can_download() allows (config/uploads.py).
+    # Both under their own folder in the bucket, both with signed links. can_download()
+    # doesn't apply here: anyone holding a link can download the file until it expires,
+    # so only show a private file's link to those allowed to see it.
     STORAGES["default"] = {
         "BACKEND": "storages.backends.s3.S3Storage",
         "OPTIONS": {**s3_options, "location": "media"},
@@ -82,6 +79,14 @@ else:
     raise ImproperlyConfigured(
         f"DJANGO_MEDIA_STORAGE must be 'filesystem' or 's3', not {media_storage!r}."
     )
+
+# With Docker, Caddy sends a private file once the view has allowed it (X-Accel-Redirect),
+# so no Gunicorn worker is tied up streaming it; compose.prod.yaml turns this on. Without
+# a proxy set up for it, Django sends the file itself. Only for files on this machine's
+# disk: Caddy can't reach files in S3.
+MEDIA_SENT_BY_PROXY = (
+    env.bool("DJANGO_MEDIA_SENT_BY_PROXY", default=False) and media_storage == "filesystem"
+)
 
 if IS_TEST:
     # Serve static files without needing `collectstatic` first.

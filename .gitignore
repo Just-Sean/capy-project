@@ -20,4 +20,5 @@ htmlcov/
 
 # Django output from trying the app in place: uploaded files and collected static files
 media/
+media-public/
 staticfiles/

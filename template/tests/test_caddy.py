@@ -60,7 +60,10 @@ def lockdown(service):
     return options
 
 
-PRIVATE_FILE = "private report.pdf"
+# As random_folder() stores it, with characters that must be escaped in an address.
+PRIVATE_FOLDER = "3f9a0c"
+PRIVATE_FILE = f"{PRIVATE_FOLDER}/q1 report #2.pdf"
+APP_COOKIE = "sessionid=renewed; HttpOnly; Secure"
 
 
 @pytest.fixture(scope="module")
@@ -69,12 +72,13 @@ def uploads(tmp_path_factory):
     readable by anyone, as uploads are: Caddy's root has no capability to read past file
     permissions."""
     private = tmp_path_factory.mktemp("media")
+    (private / PRIVATE_FOLDER).mkdir()
     (private / PRIVATE_FILE).write_text("the private report")
     public = tmp_path_factory.mktemp("media-public")
     (public / "page.html").write_text("<script>alert(1)</script>")
     (public / "uploads").mkdir()
     (public / "uploads" / "index.html").write_text("someone's upload")
-    for path in [private, public, public / "uploads"]:
+    for path in [private, private / PRIVATE_FOLDER, public, public / "uploads"]:
         path.chmod(0o755)
     for path in [private / PRIVATE_FILE, public / "page.html", public / "uploads" / "index.html"]:
         path.chmod(0o644)
@@ -122,8 +126,8 @@ def caddy(production_caddy, uploads):
 @pytest.fixture(scope="module")
 def caddy_with_app(production_caddy, uploads):
     """Caddy in front of a stand-in app that, like config/uploads.py for someone it
-    allows, answers every request by naming a private file in X-Accel-Redirect. Yields
-    Caddy's local port."""
+    allows, answers every request by naming a private file in X-Accel-Redirect, and
+    renews the session cookie. Yields Caddy's local port."""
     suffix = uuid.uuid4().hex[:8]
     network, app = f"caddyfile-test-{suffix}", f"caddyfile-test-app-{suffix}"
     docker("network", "create", network)
@@ -132,6 +136,7 @@ def caddy_with_app(production_caddy, uploads):
             "run", "--detach", "--name", app, "--network", network, "--network-alias", "web",
             production_caddy["image"], "caddy", "respond", "--listen", ":8000",
             "--header", f"X-Accel-Redirect: /{quote(PRIVATE_FILE)}",
+            "--header", f"Set-Cookie: {APP_COOKIE}",
         )  # fmt: skip
         name, port = start_caddy(production_caddy, uploads, "--network", network)
         try:
@@ -197,8 +202,18 @@ def test_once_the_app_allows_it_caddy_sends_the_private_file_as_a_download(caddy
     assert headers["Content-Disposition"] == "attachment"
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["Content-Security-Policy"] == "default-src 'none'; sandbox"
-    assert headers["Cache-Control"] == "private"
+    assert headers["Cache-Control"] == "private, no-store"
+    assert headers["Set-Cookie"] == APP_COOKIE  # the app's renewed session still arrives
     assert "X-Accel-Redirect" not in headers  # the file's name inside stays hidden
+
+
+def test_only_media_addresses_can_have_caddy_send_a_private_file(caddy_with_app):
+    # Any other page of the app naming a file (by mistake, or a header copied from
+    # elsewhere) gets nothing sent, and the header is dropped.
+    status, headers, body = request(caddy_with_app, "GET", "/any/page/")
+    assert status == 200
+    assert "the private report" not in body
+    assert "X-Accel-Redirect" not in headers
 
 
 def test_a_request_over_the_size_limit_is_refused(caddy):

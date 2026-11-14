@@ -73,10 +73,9 @@ hand. Changes so far that need this:
   address. Tests that use `client.login(...)` must switch to
   `client.force_login(user)`.
 - **Uploaded files:** nothing to add; uploads stay on local disk unless you set
-  `DJANGO_MEDIA_STORAGE=s3` (see the project README's Uploaded files section).
-  If you changed
-  `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
-  `if media_storage == ...` block.
+  `DJANGO_MEDIA_STORAGE=s3` (see the project README's Uploaded files section). If you
+  changed `STORAGES["default"]` in `config/settings/files.py`, keep your change in the
+  new `if media_storage == ...` block.
 - **Caddy in front:** production now runs Caddy, which handles HTTPS. Make `.env.caddy`:
   `SITE_ADDRESS=localhost` for the local check (`compose.local-http.yaml` replaces it),
   or `SITE_ADDRESS=your.domain` on a server, where you also point the domain's DNS at
@@ -94,14 +93,28 @@ hand. Changes so far that need this:
   default, lets only active staff download a file; everyone else gets a 404. Existing
   files stay where they are and become private. Before updating, decide who may
   download what and change `can_download()` to match (e.g. the file's owner), or your
-  users lose access to their files. Files anyone should see (pictures on public pages)
-  must move to the new `public` storage (`storage=public_storage`, at `/media-public/`):
-  change the field, make a migration, and move the files from `media/` to
-  `media-public/` (in production, from the `media` volume to the new `media_public`
-  one). If your project added its own `static(settings.MEDIA_URL, ...)` line to
-  `config/urls.py`, remove it: it would serve private files to anyone in development.
-  With S3, nothing moves; files stored as public go under `media-public/` in the bucket,
-  so add `arn:aws:s3:::BUCKET/media-public/*` to the key's permissions.
+  users lose access to their files. If your project added its own
+  `static(settings.MEDIA_URL, ...)` line to `config/urls.py`, remove it: it would serve
+  private files to anyone in development.
+
+  Files anyone should see (pictures on public pages) must move to the new `public`
+  storage (at `/media-public/`). For each such field:
+  1. Change the field to `storage=public_storage` (from `config.uploads`), then run
+     `uv run python manage.py makemigrations` and commit the migration.
+  2. Move its files, keeping their names: the database stores each file's name (here
+     the field has `upload_to="pictures"`, so `pictures/cat.jpg`), which stays the
+     same; only the folder it's in changes. In
+     development: `mkdir -p media-public && mv media/pictures media-public/`. In
+     production, right after the deploy that creates the `media_public` volume (until
+     then those pictures give a 404), as the app's own user so the app can still
+     change or delete them later:
+     `docker compose -f compose.yaml -f compose.prod.yaml run --rm --no-deps web sh -c 'mv /app/media/pictures /app/media-public/'`.
+     With S3, move them in the bucket instead:
+     `aws s3 mv --recursive s3://BUCKET/media/pictures/ s3://BUCKET/media-public/pictures/`,
+     and add `arn:aws:s3:::BUCKET/media-public/*` to the key's permissions first.
+
+  Going back to a starter version before this one makes every upload in `media/`
+  public again, and files moved to `media-public/` would need moving back.
 - **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
   it), with `base.html`, the error pages and `proxy_error.html`. If your project already
   has its own root `templates/` folder, `copier update` shows a conflict for each file
@@ -201,7 +214,7 @@ hand. Changes so far that need this:
   (`.dockerignore` doesn't need this, because git doesn't read it.)
 - The starter has its own `.gitignore`: every file whose name starts with `.env` except
   files named `.env.example.jinja`, plus Python, pytest, Ruff and coverage output and
-  Django's `media/` and `staticfiles/`. This matters beyond the starter's own history:
+  Django's `media/`, `media-public/` and `staticfiles/`. This matters beyond the starter's own history:
   `copier copy --vcs-ref=HEAD` from a local checkout includes uncommitted changes, so
   any file git doesn't ignore can end up in new projects.
 - It also has its own `.pre-commit-config.yaml`, which runs gitleaks on every commit.

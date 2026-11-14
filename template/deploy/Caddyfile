@@ -25,6 +25,29 @@
 	}
 }
 
+# What every upload is sent with: always a download, never shown as a page, so an
+# uploaded HTML or SVG file can't run scripts on this site. config/uploads.py's
+# DOWNLOAD_HEADERS does the same when Django sends a file: keep both alike.
+(download_headers) {
+	header {
+		Content-Disposition attachment
+		X-Content-Type-Options nosniff
+		Content-Security-Policy "default-src 'none'; sandbox"
+	}
+}
+
+# How Caddy talks to the app. Caddy takes in the first 1 MB of each request before
+# passing it on (bigger ones pass on as they arrive; request_body caps them), and up to
+# 1 MB of each response at once, so a slow visitor ties up Caddy, which handles many at a
+# time, instead of one of Gunicorn's few workers. While the app restarts (a deploy), it
+# keeps trying for a few seconds before showing the error page.
+(app_proxy) {
+	request_buffers 1MB
+	response_buffers 1MB
+	lb_try_duration 10s
+	lb_try_interval 250ms
+}
+
 {$SITE_ADDRESS} {
 	import security_headers
 
@@ -59,53 +82,50 @@
 	}
 
 	# Public uploads (the "public" storage), straight from the media_public volume. Must
-	# match PUBLIC_MEDIA_URL in config/settings/files.py. Always as downloads, never shown
-	# as pages: an uploaded HTML or SVG file can't run scripts on this site. No folder
-	# listings, and no index.html served for a folder's address. Private uploads
-	# (/media/) are never served from here: they go to the app, below.
+	# match PUBLIC_MEDIA_URL in config/settings/files.py. No folder listings, and no
+	# index.html served for a folder's address. Private uploads (/media/) are never
+	# served from here: they go to the app, below.
 	handle_path /media-public/* {
 		root * /srv/media-public
-		header {
-			Content-Disposition attachment
-			X-Content-Type-Options nosniff
-			Content-Security-Policy "default-src 'none'; sandbox"
-		}
+		import download_headers
 		file_server {
 			index ""
+		}
+	}
+
+	# Private uploads: the app checks who's asking (config/uploads.py) and, for someone
+	# it allows, answers with the file's name in X-Accel-Redirect. Caddy then sends that
+	# file from the media volume, so no Gunicorn worker streams it. Only the app can name
+	# a file this way (visitors' requests can't set it), and only for /media/: must match
+	# MEDIA_URL in config/settings/files.py.
+	handle /media/* {
+		log_skip
+		reverse_proxy web:8000 {
+			import app_proxy
+			@private_upload header X-Accel-Redirect *
+			handle_response @private_upload {
+				# The app's cookies (e.g. a renewed session) and HTTPS-only header still
+				# go with the file.
+				copy_response_headers {
+					include Set-Cookie Strict-Transport-Security
+				}
+				root * /srv/media
+				rewrite * {rp.header.X-Accel-Redirect}
+				import download_headers
+				header Cache-Control "private, no-store"
+				file_server {
+					index ""
+				}
+			}
 		}
 	}
 
 	handle {
 		log_skip
 		reverse_proxy web:8000 {
-			# A private upload: the app checked who's asking and answered with the
-			# file's name in X-Accel-Redirect (config/uploads.py). Caddy sends that file
-			# from the media volume instead, so no Gunicorn worker streams it. Only the
-			# app can name a file this way: visitors' requests can't set it.
-			@private_upload header X-Accel-Redirect *
-			handle_response @private_upload {
-				root * /srv/media
-				rewrite * {rp.header.X-Accel-Redirect}
-				header {
-					Content-Disposition attachment
-					X-Content-Type-Options nosniff
-					Content-Security-Policy "default-src 'none'; sandbox"
-					Cache-Control private
-				}
-				file_server {
-					index ""
-				}
-			}
-			# Caddy takes in the first 1 MB of each request before passing it on (bigger
-			# ones pass on as they arrive; the limit above caps them), and up to 1 MB of
-			# each response at once, so a slow visitor ties up Caddy, which handles many
-			# at a time, instead of one of Gunicorn's few workers.
-			request_buffers 1MB
-			response_buffers 1MB
-			# While the app restarts (a deploy), keep trying for a few seconds before
-			# showing the error page.
-			lb_try_duration 10s
-			lb_try_interval 250ms
+			import app_proxy
+			# Any other page naming a file gets nothing sent: the header is dropped.
+			header_down -X-Accel-Redirect
 		}
 	}
 

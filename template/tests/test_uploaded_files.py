@@ -34,6 +34,11 @@ PRINT_PUBLIC_STORAGE = (
     "from django.conf import settings as s; d = s.STORAGES['public']; "
     "print(d['BACKEND'], d.get('OPTIONS', {}))"
 )
+PRINT_PUBLIC_FOLDER = (
+    "from django.conf import settings as s; o = s.STORAGES['public']['OPTIONS']; "
+    "print(o['location'] == s.BASE_DIR / 'media-public', o['base_url'])"
+)
+PRINT_SENT_BY_PROXY = "from django.conf import settings as s; print(s.MEDIA_SENT_BY_PROXY)"
 
 
 def last_line(result):
@@ -72,10 +77,21 @@ def test_private_uploads_always_go_through_the_check_and_public_ones_only_in_dev
 
 
 def test_public_uploads_have_their_own_folder_and_address():
-    result = run_manage("shell", "-c", PRINT_PUBLIC_STORAGE)
-    line = last_line(result)
-    assert line.startswith("django.core.files.storage.FileSystemStorage"), result.stderr
-    assert "media-public" in line and "'base_url': '/media-public/'" in line
+    result = run_manage("shell", "-c", PRINT_PUBLIC_FOLDER)
+    assert last_line(result) == "True /media-public/", result.stderr
+
+
+@pytest.mark.parametrize(
+    ("environment", "expected"),
+    [({}, "True"), (S3, "False")],
+    ids=["files on disk", "s3"],
+)
+def test_caddy_sends_private_files_only_when_they_are_on_this_machine(environment, expected):
+    # Caddy can't reach files in S3: the app sends those itself.
+    result = run_manage(
+        "shell", "-c", PRINT_SENT_BY_PROXY, DJANGO_MEDIA_SENT_BY_PROXY="true", **environment
+    )
+    assert last_line(result) == expected, result.stderr
 
 
 def test_s3_keeps_public_uploads_under_their_own_folder_signed_too():

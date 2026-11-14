@@ -26,7 +26,7 @@ x-logging: &logging
 
 # The app image, as the migrate step, the app and the worker run it. Locked down: no Linux
 # capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
-# and the uploads volume.
+# and the two uploads volumes.
 x-app: &app
   build: .
   image: {{ project_slug }}-web
