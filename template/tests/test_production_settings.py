@@ -1,7 +1,8 @@
 """Production must be secure and must refuse to start when misconfigured.
 
 Each test runs manage.py in a separate process with a production-style
-environment (no .env file, no DJANGO_ENV, so production), exactly as a server would.
+environment (no .env file, no DJANGO_ENV, so production), as a server would, except
+that Django deprecation warnings are errors, as in the rest of the tests.
 """
 
 import os
@@ -13,6 +14,20 @@ import pytest
 from django.conf import settings
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+# pytest's warning rules (filterwarnings in pyproject.toml) don't reach the manage.py
+# processes run_manage starts, so it makes Django's deprecation warnings errors there
+# too (tests/test_deprecation_warnings.py checks both). Python's own -W option can't
+# name Django's warning classes, so this starts manage.py after setting the rules, with
+# the same sys.path and sys.argv that `python manage.py` would have.
+MANAGE_WITH_WARNINGS_AS_ERRORS = (
+    "import os, runpy, sys, warnings\n"
+    "from django.utils import deprecation\n"
+    "warnings.simplefilter('error', deprecation.RemovedInNextVersionWarning)\n"
+    "warnings.simplefilter('error', deprecation.RemovedAfterNextVersionWarning)\n"
+    "sys.path[0] = os.getcwd()\n"
+    "sys.argv[0] = 'manage.py'\n"
+    "runpy.run_path('manage.py', run_name='__main__')\n"
+)
 
 PRODUCTION_ENV = {
     "DJANGO_READ_DOT_ENV": "false",
@@ -36,7 +51,7 @@ def run_manage(*args, **env_changes):
     env = {"PATH": os.environ["PATH"], **coverage, **PRODUCTION_ENV, **env_changes}
     env = {key: value for key, value in env.items() if value is not None}
     return subprocess.run(
-        [sys.executable, "manage.py", *args],
+        [sys.executable, "-c", MANAGE_WITH_WARNINGS_AS_ERRORS, *args],
         cwd=PROJECT_DIR,
         env=env,
         capture_output=True,
