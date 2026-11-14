@@ -219,12 +219,13 @@ def test_the_app_gets_longer_to_stop_than_gunicorn_needs(project):
     assert int(grace[:-1]) > gunicorn["graceful_timeout"]
 
 
-def test_the_worker_runs_jobs_with_the_apps_files_and_no_web_health_check(project):
+def test_the_worker_runs_jobs_with_the_apps_files_and_its_own_health_check(project):
     services = config(project, *PRODUCTION)["services"]
     worker = services["worker"]
     assert worker["command"][-2:] == ["manage.py", "db_worker"]
     assert worker["image"] == services["web"]["image"]
-    assert worker["healthcheck"]["disable"] is True  # the image's check calls /healthz
+    # Its own check, not the image's (which calls /healthz, which the worker doesn't serve).
+    assert worker["healthcheck"]["test"] == ["CMD", "python", "-m", "config.health", "worker"]
     assert worker["volumes"] == services["web"]["volumes"]  # the same uploaded files
 
 

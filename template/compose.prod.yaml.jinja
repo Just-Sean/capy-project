@@ -93,13 +93,19 @@ services:
     stop_grace_period: 35s
 
   # Runs background jobs: those the app enqueued, stored in the database. Same image,
-  # settings and lockdown as the app, but it serves nothing, so no port or web health
-  # check. Starts only once migrate succeeded, like the app.
+  # settings and lockdown as the app, but it serves nothing, so no port, and its own
+  # health check instead of the web one. Starts only once migrate succeeded, like the app.
   worker:
     <<: *app
     command: ["python", "manage.py", "db_worker"]
+    # Unhealthy when the database doesn't answer, or jobs have waited over 5 minutes with
+    # none started (the worker is stuck or stopped): see config/health.py. It serves no
+    # /healthz, so this replaces the image's check.
     healthcheck:
-      disable: true                    # it never serves /healthz
+      test: ["CMD", "python", "-m", "config.health", "worker"]
+      interval: 60s
+      timeout: 20s
+      start_period: 30s
     depends_on:
       migrate:
         condition: service_completed_successfully

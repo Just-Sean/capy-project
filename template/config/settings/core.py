@@ -40,7 +40,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "config.middleware.healthz",  # first: answers /healthz before host checks or the database
+    "config.middleware.health_checks",  # first: /healthz and /readyz skip host checks
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.csp.ContentSecurityPolicyMiddleware",  # sends SECURE_CSP (security.py)
     # Static files, right after the security headers, so they carry them (and the CSP) too.

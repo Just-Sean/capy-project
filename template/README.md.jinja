@@ -237,9 +237,40 @@ migration must still work with the code already running (add things first, remov
 them in a later release). There is no rollback to a previous image yet; a later
 version of the starter adds versioned images and deploy steps.
 
-<http://localhost:8000/healthz> returns `ok`. It never touches the database and
-answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balancers
-(which call it by IP) can poll it.
+Two health checks answer whatever the Host header is, before the HTTPS redirect, so
+load balancers and proxies (which call them by IP, often over plain HTTP) can poll them:
+
+| URL | Answers `ok` when | Otherwise | Used by |
+| --- | --- | --- | --- |
+| <http://localhost:8000/healthz> | The app is running. It never touches the database or Redis | No answer | Docker's `HEALTHCHECK`. A database outage doesn't mark every app container unhealthy (which would fail `up --wait`, and make tools that restart unhealthy containers restart them all) |
+| <http://localhost:8000/readyz> | The database and Redis answer too | 503 `not ready`, and a `Not ready: database failed` (or `cache`) warning in the logs | A load balancer in front of several app servers, to stop sending visitors to one that can't serve them |
+
+`/readyz` is optional: with one app server there's nowhere else to send visitors, so
+leave it unused (a proxy that health-checks its only server on `/readyz` would refuse
+every request during a short Redis blip). It checks the database over a new connection
+each time, which gives up after 5 seconds (`connect_timeout` in
+`config/settings/database.py`; a `?connect_timeout=10` in `DATABASE_URL` overrides it),
+and Redis gives up after 2: measured with each one frozen, `/readyz` answers 503 in 5
+and 2 seconds. Keep both URLs off the public site: have the proxy answer `/healthz` and
+`/readyz` with a 404, and let the load balancer call the app directly. Otherwise anyone
+can see when the database is down, and each call costs a database and Redis query.
+
+The `worker` has its own Docker health check, `python -m config.health worker`, every
+minute. It's unhealthy when the database doesn't answer, or when a job has waited more
+than 5 minutes while no job has started in that time (`MAX_JOB_WAIT` in
+`config/health.py`): the worker is stuck or stopped. A busy worker catching up on a
+backlog keeps starting jobs, so it stays healthy. The first check runs a minute after
+the worker starts, so `up --wait` takes about a minute longer than before.
+
+When it's unhealthy, `docker compose -f compose.yaml -f compose.prod.yaml ps` shows it,
+and `up --wait` fails. Docker doesn't restart it by itself. The check's own messages are
+kept by Docker, not in the worker's logs:
+
+```bash
+docker inspect --format '{{ '{{' }}json .State.Health.Log{{ '}}' }}' {{ project_slug }}-production-worker-1   # why the check failed
+docker compose -f compose.yaml -f compose.prod.yaml logs worker      # what the worker was doing
+docker compose -f compose.yaml -f compose.prod.yaml restart worker   # then restart it
+```
 
 **Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
 
@@ -408,9 +439,10 @@ running for good: keep each job well under 60 seconds (split long work into smal
 jobs), and after an unclean stop, look in the admin's job list for jobs still running
 and enqueue them again. Jobs waiting when you redeploy are run by the new code, so when
 you change a job's arguments, keep accepting the old ones until those jobs have run (or
-give the changed job a new name). The worker has no health check yet: a stuck one
-still shows as running in `docker compose ps`, so give network calls in jobs their own
-timeouts.
+give the changed job a new name). Give network calls in jobs their own timeouts: a job
+stuck on one holds up every job behind it. The worker's health check (see
+[Production](#production-the-real-image-run-locally)) marks it unhealthy once jobs have
+waited 5 minutes with none started, which Docker notices within about 3 more minutes.
 
 In production, jobs and their results (including a failed job's error) are listed,
 read-only, in the admin. Development and tests store nothing, so the list stays empty
@@ -454,7 +486,8 @@ Production writes one JSON object per line, so log tools can search by field:
   (`gunicorn.access`) are JSON too, with the request's details as text in `message`:
   address, method, path, status, bytes, milliseconds and browser. Behind a reverse
   proxy the address is the proxy's; the visitor's is in the proxy's own logs. Docker's
-  health check adds a `GET /healthz` line every 30 seconds.
+  health check adds a `GET /healthz` line every 30 seconds, and a load balancer polling
+  `/readyz` one line per poll.
 - **What's in them:** request lines leave out query strings, which often carry tokens,
   but a path can still hold one (Django's password reset links do), the secret admin
   path shows up, and addresses and browsers are personal data. Keep logs as private as
@@ -540,7 +573,7 @@ unless noted.
   uv run python manage.py axes_reset_ip <address>                 # one address
   docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py axes_reset   # in production
   ```
-- **Security headers** on every response except `/healthz`: `X-Frame-Options: DENY`,
+- **Security headers** on every response except `/healthz` and `/readyz`: `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and
   `Cross-Origin-Opener-Policy: same-origin`. Production adds the HTTPS redirect,
   HTTPS-only cookies and HSTS (one year, subdomains included; on a brand-new domain
@@ -670,7 +703,8 @@ uv run pytest --cov
 | --- | --- |
 | `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `tasks.py` (background jobs), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
 | `config/urls.py` | The root URL map; each app adds its URLs here. Also `/csp-report/`, and uploaded files at `/media/` in development |
-| `config/middleware.py` | Answers `/healthz` before anything else runs |
+| `config/middleware.py` | Answers `/healthz` and `/readyz` before anything else runs |
+| `config/health.py` | The checks: the database and Redis answer (`/readyz`), and the worker keeps up (`python -m config.health worker`) |
 | `config/logging.py` | The log formats: one JSON object per line in production, readable text otherwise |
 | `config/csp_report.py` | Logs a short summary of each report of what the Content Security Policy blocked (`/csp-report/`) |
 | `config/email_not_set_up.py` | The email backend production uses without `EMAIL_URL`: sending fails with a clear error instead of the email being lost |
@@ -678,6 +712,7 @@ uv run pytest --cov
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
+| `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database refuses or never answers (while `/healthz` still answers), the database check uses its own connection, failures are logged without connection details, and the worker's check fails when the database is down or jobs wait with none started, but not for a busy worker, finished jobs, other queues or Redis being down |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_deprecation_warnings.py` | Proves every Django deprecation warning (a deprecated setting included) fails the tests, both in pytest itself and in the `manage.py` processes tests start, that those processes otherwise run as `python manage.py` would, and that other libraries' deprecations don't fail the tests |

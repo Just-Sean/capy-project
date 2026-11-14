@@ -2,18 +2,32 @@
 
 from django.http import HttpResponse
 
+from config.health import failing_checks
 
-def healthz(get_response):
-    """Answer /healthz with "ok" before anything else runs.
 
-    It's first in MIDDLEWARE, so it skips the ALLOWED_HOSTS check (load balancers
-    call it by IP), the HTTPS redirect, sessions and the database. A 200 means the
-    process is up and serving requests.
+def health_checks(get_response):
+    """Answer /healthz and /readyz before anything else runs.
+
+    It's first in MIDDLEWARE, so they skip the ALLOWED_HOSTS check (load balancers
+    call them by IP), the HTTPS redirect and sessions.
+      /healthz  "ok" while the process is up and serving requests. It never touches the
+                database, so a database outage doesn't make the app container unhealthy.
+      /readyz   "ok" only if the database and Redis answer too, else 503 "not ready":
+                for a load balancer, to stop sending traffic to a server that can't
+                serve it.
     """
 
     def middleware(request):
         if request.path == "/healthz":
-            return HttpResponse("ok", content_type="text/plain")
+            return plain_text("ok")
+        if request.path == "/readyz":
+            return plain_text("not ready", status=503) if failing_checks() else plain_text("ok")
         return get_response(request)
 
     return middleware
+
+
+def plain_text(text, status=200):
+    response = HttpResponse(text, content_type="text/plain", status=status)
+    response["Cache-Control"] = "no-store"  # always a fresh answer, never a cached one
+    return response
