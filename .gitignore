@@ -1,13 +1,23 @@
 # The starter repo's own ignore list. (New projects get template/.gitignore.jinja.)
+# It matters beyond this repo's history: `copier copy --vcs-ref=HEAD` from a local
+# checkout includes uncommitted changes, so any file git doesn't ignore here can end
+# up in new projects.
 
-# Secrets: every file whose name starts with .env, in any folder, except the template's
-# example (template/.env.example.jinja).
+# Secrets: every file whose name starts with .env, in any folder, except files named
+# .env.example.jinja (the template's example).
 .env*
 !.env.example.jinja
 
-# Python and tool caches, e.g. from trying things out inside template/
+# Python, pytest, Ruff and coverage output, e.g. from running Python or ruff here
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Django output from trying the app in place: uploaded files and collected static files
+media/
+staticfiles/
