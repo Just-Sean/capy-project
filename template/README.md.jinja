@@ -170,11 +170,13 @@ Caddy (`deploy/Caddyfile`) is the only part the internet reaches, on ports 80 an
 - **When the app doesn't answer** (a restart, or it's down): `templates/proxy_error.html`
   with the real status (502, 503 or 504).
 - **`/healthz` and `/readyz`:** a 404 from outside (see the health checks below).
-- **Rate limits:** per visitor address, 600 requests a minute, and 30 form posts a
-  minute (the admin login, `/csp-report/`, any form). Over that, a 429 with
+- **Rate limits:** per visitor address, 600 requests a minute, 30 form posts a minute
+  (the admin login, any form), and 120 CSP reports a minute (`/csp-report/`, counted
+  apart so browsers' own reports never block a form). Over that, a 429 with
   `Retry-After`. The app's login lockouts (django-axes) apply on top. Change them in
-  `rate_limit` in `deploy/Caddyfile`. Behind a CDN or load balancer every visitor
-  shares its address, so raise them or key them on the header it sets.
+  `rate_limit` in `deploy/Caddyfile`. Visitors sharing an address (an office, a mobile
+  network) share these limits, and behind a CDN or load balancer every visitor would:
+  raise them, or key them on the header it sets.
 
 The app and the worker run locked down: no Linux capabilities, a read-only filesystem
 (uploads go to the `media` and `media_public` volumes, temporary files to an in-memory
@@ -185,7 +187,9 @@ on ports 80 and 443 inside Caddy's container (`net.ipv4.ip_unprivileged_port_sta
 so it needs no capability for that. The database and Redis are only on an internal
 network with no published port, and the app has no published port: everything reaches
 it through Caddy. Docker Compose 2.24.4 or later is needed (`compose.local-http.yaml`
-uses `!override`).
+uses `!override`), and Docker Engine 27 or later: Caddy's network has IPv6 on, so
+IPv6 visitors arrive with their own address (otherwise they'd all share one rate
+limit), and Engine 27 picks its IPv6 range by itself.
 
 To update Caddy, change the version in both `FROM` lines of `deploy/caddy.Dockerfile`,
 and the plugin's version on the `xcaddy build` line to a release that supports it,

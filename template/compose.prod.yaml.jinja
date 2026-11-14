@@ -184,6 +184,12 @@ services:
     restart: unless-stopped
 
 networks:
+  # Where Caddy is published. IPv6 on, so Docker passes IPv6 visitors' own addresses to
+  # Caddy: without it, Docker relays their connections itself and every IPv6 visitor
+  # arrives from one address, sharing one rate limit. (Docker Engine 27 or later picks
+  # the IPv6 range itself.)
+  default:
+    enable_ipv6: true
   backend:
     internal: true                     # no internet access from the database or Redis
 

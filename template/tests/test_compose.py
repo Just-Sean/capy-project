@@ -235,6 +235,14 @@ def test_the_app_redis_and_caddy_run_locked_down(project):
     assert "no-new-privileges:true" in services["db"]["security_opt"]
 
 
+def test_ipv6_visitors_reach_caddy_with_their_own_address(project):
+    # Without IPv6 on Caddy's network, Docker relays IPv6 connections itself, and every
+    # IPv6 visitor shares one address, and one rate limit.
+    production = config(project, *PRODUCTION)
+    assert production["networks"]["default"]["enable_ipv6"] is True
+    assert "default" in production["services"]["caddy"].get("networks", {"default": None})
+
+
 def test_every_production_service_keeps_limited_logs(project):
     # Docker's default keeps logs without a limit, so they could fill the disk.
     services = config(project, *PRODUCTION)["services"]

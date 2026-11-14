@@ -225,6 +225,15 @@ def test_a_visitor_posting_too_often_is_refused_but_can_still_browse(fresh_caddy
     assert request(fresh_caddy, "GET", "/any/page/")[0] == 200  # pages still load
 
 
+def test_csp_reports_have_their_own_limit_and_never_block_a_form(fresh_caddy):
+    # Browsers send these by themselves: they mustn't use up a visitor's form posts.
+    for _ in range(40):
+        assert request(fresh_caddy, "POST", "/csp-report/", body="{}")[0] == 200
+    assert request(fresh_caddy, "POST", "/any/form/", body="x")[0] == 200
+    statuses = [request(fresh_caddy, "POST", "/csp-report/", body="{}")[0] for _ in range(81)]
+    assert statuses[-1] == 429  # 120 a minute
+
+
 def test_a_visitor_flooding_the_site_is_refused(fresh_caddy):
     # 600 requests a minute per address (the start-up checks count too).
     statuses = [request(fresh_caddy, "GET", "/any/page/")[0] for _ in range(601)]
