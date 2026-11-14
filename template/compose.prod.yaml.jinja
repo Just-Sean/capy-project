@@ -1,9 +1,10 @@
-# Production: Postgres, the migrate step and the app. Run it with
+# Production: Postgres, Redis, the migrate step and the app. Run it with
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
-# Secrets come from two files next to this one, never from this file or the image
+# Secrets come from three files next to this one, never from this file or the image
 # (git and .dockerignore both ignore them; see the README for what goes in each):
-#   .env.production  Django's settings, including DATABASE_URL
+#   .env.production  Django's settings, including DATABASE_URL and CACHE_URL
 #   .env.postgres    the database login: user, password and database name
+#   .env.redis       the Redis password (REDIS_PASSWORD)
 
 # Its own project name, so production's containers and database volume are separate
 # from development's even on the same machine.
@@ -27,9 +28,22 @@ services:
     env_file: .env.postgres
     security_opt: ["no-new-privileges:true"]
     # No published port and only the internal network: the app reaches it, nothing else.
+    # (Its entrypoint starts as root to set up the data folder, so no cap_drop here.)
     networks: [backend]
     volumes:
       - pgdata:/var/lib/postgresql
+    restart: unless-stopped
+
+  # The cache, locked down like the app: it runs as its own unprivileged user with a
+  # login, saves nothing to disk, and only the internal network reaches it. /data is in
+  # memory: it only holds the login file Redis writes at start.
+  redis:
+    env_file: .env.redis
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: ["/data:uid=999,gid=999,mode=0700"]   # 999 is the redis user in the image
+    networks: [backend]
     restart: unless-stopped
 
   # Applies migrations, then exits. The app starts only if it succeeded, so new code
@@ -49,7 +63,9 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    # backend reaches the database; default lets Docker publish the port.
+      redis:
+        condition: service_healthy
+    # backend reaches the database and Redis; default lets Docker publish the port.
     networks: [backend, default]
     ports:
       - "127.0.0.1:8000:8000"          # this machine only: a reverse proxy forwards to it
@@ -62,7 +78,7 @@ services:
 
 networks:
   backend:
-    internal: true                     # no internet access from the database
+    internal: true                     # no internet access from the database or Redis
 
 volumes:
   pgdata:

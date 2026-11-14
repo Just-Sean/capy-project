@@ -5,6 +5,8 @@ gets only what has to exist on day one:
 
 - PostgreSQL 18 (the official image) in Docker; extensions such as pgvector are added
   per project when one needs them
+- Redis 8 as Django's cache (`CACHE_URL`), with a login: it saves nothing to disk, and in
+  production only the app can reach it
 - Docker Compose for development and production: a shared base, a development override,
   and a production file with secrets from env files and a separate migrate step
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID
@@ -33,6 +35,18 @@ copier update
 
 Copier re-applies the starter's changes and asks about any conflicts.
 Tag starter releases (`git tag v0.2.0`) so projects update to a known version.
+
+`copier update` never touches a project's own secret files (`.env`, `.env.production`
+and the like: they're git-ignored). When an update adds a required setting, add it by
+hand. Changes so far that need this:
+
+- **Redis cache:** add `CACHE_URL=redis://app:app@localhost:6379/0` to `.env`, and start
+  development with `docker compose up -d` (it now starts Redis too). For production,
+  make `.env.redis` and add `CACHE_URL` to `.env.production`, as the project README's
+  Production section shows.
+- **Postgres image:** projects made before the compose split used the pgvector image.
+  The official Postgres image doesn't include pgvector, so a project that uses it must
+  switch its image back in `compose.yaml`.
 
 ## Working on the starter
 

@@ -1,5 +1,6 @@
 """The compose files: development stays on this machine, production keeps its secrets in
 env files, migrates before the app starts, runs locked down, and shuts down gracefully.
+Redis is a cache only: nothing on disk, a memory limit, and internal in production.
 
 `docker compose config` merges the files exactly as `docker compose up` would, without
 starting anything or needing the Docker daemon.
@@ -38,7 +39,7 @@ def project(tmp_path):
     """A copy of the compose files, with empty secret files (production needs them)."""
     for name in COMPOSE_FILES:
         shutil.copy(PROJECT_DIR / name, tmp_path / name)
-    for name in [".env.production", ".env.postgres"]:
+    for name in [".env.production", ".env.postgres", ".env.redis"]:
         (tmp_path / name).write_text("")
     return tmp_path
 
@@ -71,10 +72,49 @@ def env_files(service):
 # --- Development -----------------------------------------------------------------
 
 
-def test_development_runs_only_postgres_reachable_from_this_machine(project):
+def test_development_runs_postgres_and_redis_reachable_from_this_machine(project):
     services = config(project)["services"]
-    assert set(services) == {"db"}
-    assert host_ips(services["db"]) == {"127.0.0.1"}
+    assert set(services) == {"db", "redis"}
+    assert host_ips(services["db"]) == host_ips(services["redis"]) == {"127.0.0.1"}
+
+
+def redis_start_script(project, *files):
+    """The shell script the Redis service starts with (sh -c '...'), on one line."""
+    command = config(project, *files, as_written=True)["services"]["redis"]["command"]
+    assert command[:2] == ["sh", "-c"]
+    return " ".join(command[2].split())
+
+
+def last_value(script, option):
+    """The value Redis uses for an option: the last one given, as Redis reads them."""
+    values = re.findall(rf"{option} (\S+)", script)
+    assert values, f"{option} is missing"
+    return values[-1]
+
+
+@pytest.mark.parametrize("files", [[], PRODUCTION], ids=["development", "production"])
+def test_redis_is_a_cache_that_saves_nothing_and_stays_within_its_memory(project, files):
+    script = redis_start_script(project, *files)
+    assert last_value(script, "--save") == '""'
+    assert last_value(script, "--appendonly") == "no"
+    assert last_value(script, "--maxmemory-policy") == "allkeys-lru"
+    assert re.fullmatch(r"[1-9]\d*mb", last_value(script, "--maxmemory"))  # 0 means no limit
+    assert "volumes" not in config(project, *files)["services"]["redis"]
+
+
+def test_redis_needs_a_login_and_keeps_the_password_out_of_its_arguments(project):
+    script = redis_start_script(project)
+    assert "user default off" in script  # no login-free access
+    assert "-@dangerous" in script  # the app's login can't run admin commands
+    assert "--aclfile" in script
+    # The password goes into the users file, never onto redis-server's command line.
+    assert "PASSWORD" not in script.split("exec redis-server", 1)[1]
+    assert config(project)["services"]["redis"]["user"] == "redis"  # never root
+
+
+def test_the_redis_health_check_uses_the_ping_only_login(project):
+    test = config(project)["services"]["redis"]["healthcheck"]["test"]
+    assert test[test.index("--user") + 1] == "healthcheck"
 
 
 def test_the_database_is_ready_only_once_it_answers_over_tcp(project):
@@ -86,8 +126,9 @@ def test_the_database_is_ready_only_once_it_answers_over_tcp(project):
 # --- Production ------------------------------------------------------------------
 
 
-def test_production_runs_postgres_migrate_and_the_app(project):
-    assert set(config(project, *PRODUCTION)["services"]) == {"db", "migrate", "web"}
+def test_production_runs_postgres_redis_migrate_and_the_app(project):
+    services = config(project, *PRODUCTION)["services"]
+    assert set(services) == {"db", "redis", "migrate", "web"}
 
 
 def test_production_is_a_separate_project_from_development(project):
@@ -98,6 +139,7 @@ def test_production_secrets_come_only_from_env_files(project):
     # Written in a compose file, a secret would be committed to git.
     services = config(project, *PRODUCTION, as_written=True)["services"]
     assert env_files(services["db"]) == [".env.postgres"]
+    assert env_files(services["redis"]) == [".env.redis"]
     for name in APP_SERVICES:
         assert env_files(services[name]) == [".env.production"]
     assert [name for name, service in services.items() if "environment" in service] == []
@@ -106,13 +148,14 @@ def test_production_secrets_come_only_from_env_files(project):
 def test_only_the_app_is_published_and_only_on_this_machine(project):
     services = config(project, *PRODUCTION)["services"]
     assert host_ips(services["web"]) == {"127.0.0.1"}
-    assert [name for name in ["db", "migrate"] if "ports" in services[name]] == []
+    assert [name for name in ["db", "redis", "migrate"] if "ports" in services[name]] == []
     assert [name for name, service in services.items() if "network_mode" in service] == []
 
 
-def test_the_database_is_only_on_an_internal_network(project):
+def test_the_database_and_redis_are_only_on_an_internal_network(project):
     production = config(project, *PRODUCTION)
-    assert list(production["services"]["db"]["networks"]) == ["backend"]
+    for name in ["db", "redis"]:
+        assert list(production["services"][name]["networks"]) == ["backend"]
     assert production["networks"]["backend"]["internal"] is True
 
 
@@ -125,24 +168,33 @@ def test_production_migrates_before_the_app_starts(project):
     assert services["migrate"]["command"][-2:] == ["migrate", "--noinput"]
 
 
+def test_the_app_starts_once_redis_is_ready(project):
+    web = config(project, *PRODUCTION)["services"]["web"]
+    assert web["depends_on"]["redis"]["condition"] == "service_healthy"
+
+
 def test_migrate_runs_once_and_has_no_health_check(project):
     migrate = config(project, *PRODUCTION)["services"]["migrate"]
     assert migrate.get("restart", "no") == "no"  # restarting would re-run it in a loop
     assert migrate["healthcheck"]["disable"] is True
 
 
-def test_the_app_runs_locked_down(project):
+def test_the_app_and_redis_run_locked_down(project):
     services = config(project, *PRODUCTION)["services"]
-    for name in APP_SERVICES:
+    for name in [*APP_SERVICES, "redis"]:
         assert services[name]["cap_drop"] == ["ALL"]
         assert services[name]["read_only"] is True
         assert "no-new-privileges:true" in services[name]["security_opt"]
+    assert services["redis"]["user"] == "redis"  # never root
+    # Its read-only filesystem leaves only /data, in memory, for the login file.
+    assert services["redis"]["tmpfs"] == ["/data:uid=999,gid=999,mode=0700"]
     assert "no-new-privileges:true" in services["db"]["security_opt"]
 
 
 def test_production_restarts_after_a_crash(project):
     services = config(project, *PRODUCTION)["services"]
-    assert services["db"]["restart"] == services["web"]["restart"] == "unless-stopped"
+    restarts = {services[name]["restart"] for name in ["db", "redis", "web"]}
+    assert restarts == {"unless-stopped"}
 
 
 def test_the_app_gets_longer_to_stop_than_gunicorn_needs(project):
@@ -160,4 +212,5 @@ def test_the_app_gets_longer_to_stop_than_gunicorn_needs(project):
 def test_only_the_local_http_file_turns_the_https_settings_off(project):
     services = config(project, *LOCAL_HTTP, as_written=True)["services"]
     assert set(services["web"]["environment"]) == HTTPS_SETTINGS
-    assert [name for name in ["db", "migrate"] if "environment" in services[name]] == []
+    others = ["db", "redis", "migrate"]
+    assert [name for name in others if "environment" in services[name]] == []

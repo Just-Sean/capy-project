@@ -9,6 +9,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from django.conf import settings
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -19,6 +20,7 @@ PRODUCTION_ENV = {
     "DJANGO_ALLOWED_HOSTS": "example.com",
     "DJANGO_ADMIN_URL": "staff-portal/",
     "DATABASE_URL": "postgres://user:pass@localhost:5432/db",
+    "CACHE_URL": "redis://app:cache-password@localhost:6379/0",
 }
 
 
@@ -65,6 +67,45 @@ def test_refuses_to_start_without_allowed_hosts():
     assert "DJANGO_ALLOWED_HOSTS" in result.stderr
 
 
+def test_refuses_to_start_without_a_cache():
+    result = run_manage("check", CACHE_URL=None)
+    assert result.returncode != 0
+    assert "CACHE_URL" in result.stderr
+
+
+PRINT_CACHE = (
+    "from django.conf import settings; c = settings.CACHES['default']; o = c['OPTIONS']; "
+    "print(c['BACKEND'], o['socket_connect_timeout'], o['socket_timeout'], "
+    "'health_check_interval' in o)"
+)
+
+
+def test_production_caches_in_redis_and_gives_up_quickly():
+    result = run_manage("shell", "-c", PRINT_CACHE)
+    assert result.stdout.strip().splitlines()[-1] == (
+        "django.core.cache.backends.redis.RedisCache 2 2 False"
+    ), result.stderr
+
+
+def test_options_in_the_cache_url_are_kept():
+    url = "redis://app:cache-password@localhost:6379/0?health_check_interval=30"
+    result = run_manage("shell", "-c", PRINT_CACHE, CACHE_URL=url)
+    assert result.stdout.strip().splitlines()[-1].endswith("2 2 True"), result.stderr
+
+
+@pytest.mark.parametrize("url", ["dummycache://", "locmemcache://", ""])
+def test_refuses_a_cache_that_is_not_redis(url):
+    result = run_manage("check", CACHE_URL=url)
+    assert result.returncode != 0
+    assert "CACHE_URL must start with redis://" in result.stderr
+
+
+def test_development_also_refuses_to_start_without_a_cache():
+    result = run_manage("check", DJANGO_ENV="development", CACHE_URL=None)
+    assert result.returncode != 0
+    assert "CACHE_URL" in result.stderr
+
+
 def test_refuses_default_admin_url():
     result = run_manage("check", DJANGO_ADMIN_URL="admin/")
     assert result.returncode != 0
@@ -83,7 +124,7 @@ def test_refuses_unknown_environment():
     assert "DJANGO_ENV" in result.stderr
 
 
-def test_development_starts_with_only_a_database_url():
+def test_development_starts_with_only_database_and_cache_urls():
     result = run_manage(
         "shell",
         "-c",
@@ -100,3 +141,9 @@ def test_development_starts_with_only_a_database_url():
 def test_pytest_runs_as_the_test_environment():
     assert settings.DJANGO_ENV == "test"
     assert settings.DEBUG is False
+
+
+def test_tests_cache_in_memory_without_redis():
+    assert settings.CACHES["default"]["BACKEND"] == (
+        "django.core.cache.backends.locmem.LocMemCache"
+    )

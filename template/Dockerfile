@@ -1,6 +1,7 @@
-# Production image. Build and run it, with its migrate step and Postgres, using:
+# Production image. Build and run it, with its migrate step, Postgres and Redis, using:
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build
-# Development doesn't use this: Django runs on your machine, only Postgres runs in Docker.
+# Development doesn't use this: Django runs on your machine, only Postgres and Redis run
+# in Docker.
 
 # ---- Stage 1: install dependencies with uv -----------------------------------
 FROM python:3.14-slim-trixie AS build
@@ -20,7 +21,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # settings load during the build; they never reach the running container.
 COPY . .
 RUN DJANGO_SECRET_KEY=build-only DJANGO_ALLOWED_HOSTS=build DJANGO_ADMIN_URL=build-only/ \
-    DATABASE_URL=postgres://build@localhost/build DJANGO_READ_DOT_ENV=false \
+    DATABASE_URL=postgres://build@localhost/build CACHE_URL=redis://build:6379/0 \
+    DJANGO_READ_DOT_ENV=false \
     /app/.venv/bin/python manage.py collectstatic --noinput
 
 # ---- Stage 2: the small runtime image ------------------------------------------
