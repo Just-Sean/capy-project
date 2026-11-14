@@ -1,5 +1,6 @@
-"""Uploaded files: local by default (development serves them), S3 if chosen, with safe
-defaults, and misconfiguration refused at startup."""
+"""Uploaded files: local by default, S3 if chosen, private unless stored as public, with
+safe defaults, and misconfiguration refused at startup. Who may download a private file
+is tested in tests/test_private_uploads.py."""
 
 import pytest
 from django.core.exceptions import SuspiciousFileOperation
@@ -23,10 +24,15 @@ PRINT_CREDENTIALS = (
     "from django.core.files.storage import default_storage as d; "
     "print(repr(d.access_key), repr(d.secret_key))"
 )
-CAN_RESOLVE_MEDIA = (
+WHO_ANSWERS = (
     "from django.urls import resolve, Resolver404\n"
-    "try:\n    resolve('/media/report.pdf'); print('served')\n"
-    "except Resolver404:\n    print('not served')"
+    "for path in ['/media/report.pdf', '/media-public/photo.png']:\n"
+    "    try:\n        print(resolve(path).func.__name__, end=' ')\n"
+    "    except Resolver404:\n        print('nothing', end=' ')\n"
+)
+PRINT_PUBLIC_STORAGE = (
+    "from django.conf import settings as s; d = s.STORAGES['public']; "
+    "print(d['BACKEND'], d.get('OPTIONS', {}))"
 )
 
 
@@ -57,11 +63,27 @@ def test_local_uploads_cant_escape_the_media_folder(settings, tmp_path, name):
     assert not (tmp_path / "escape.txt").exists()
 
 
-def test_development_serves_uploads_and_production_doesnt():
-    development = run_manage("shell", "-c", CAN_RESOLVE_MEDIA, DJANGO_ENV="development")
-    production = run_manage("shell", "-c", CAN_RESOLVE_MEDIA)
-    assert last_line(development) == "served", development.stderr
-    assert last_line(production) == "not served", production.stderr
+def test_private_uploads_always_go_through_the_check_and_public_ones_only_in_development():
+    # Production's public uploads are served by Caddy (or S3), never by Django.
+    development = run_manage("shell", "-c", WHO_ANSWERS, DJANGO_ENV="development")
+    production = run_manage("shell", "-c", WHO_ANSWERS)
+    assert last_line(development) == "download serve", development.stderr
+    assert last_line(production) == "download nothing", production.stderr
+
+
+def test_public_uploads_have_their_own_folder_and_address():
+    result = run_manage("shell", "-c", PRINT_PUBLIC_STORAGE)
+    line = last_line(result)
+    assert line.startswith("django.core.files.storage.FileSystemStorage"), result.stderr
+    assert "media-public" in line and "'base_url': '/media-public/'" in line
+
+
+def test_s3_keeps_public_uploads_under_their_own_folder_signed_too():
+    result = run_manage("shell", "-c", PRINT_PUBLIC_STORAGE, **S3)
+    line = last_line(result)
+    assert line.startswith("storages.backends.s3.S3Storage"), result.stderr
+    assert "'location': 'media-public'" in line
+    assert "'querystring_auth': True" in line
 
 
 def test_s3_files_are_private_downloads_that_are_never_overwritten():

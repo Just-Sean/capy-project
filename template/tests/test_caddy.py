@@ -10,6 +10,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -59,43 +60,87 @@ def lockdown(service):
     return options
 
 
+PRIVATE_FILE = "private report.pdf"
+
+
 @pytest.fixture(scope="module")
-def caddy(tmp_path_factory, production_caddy):
-    """Caddy with the project's Caddyfile over plain HTTP, locked down as in
-    compose.prod.yaml, with uploads in its media folder and no app behind it (as when
-    the app is down). Its certificate folders are in memory here, not volumes. Yields
-    the local port it answers on."""
-    media = tmp_path_factory.mktemp("media")
-    (media / "page.html").write_text("<script>alert(1)</script>")
-    (media / "uploads").mkdir()
-    (media / "uploads" / "index.html").write_text("someone's upload")
-    # Readable by anyone, as uploads are: Caddy's root has no capability to read past
-    # file permissions.
-    for path in [media, media / "uploads"]:
+def uploads(tmp_path_factory):
+    """The two upload folders: private (media) and public (media-public). Everything is
+    readable by anyone, as uploads are: Caddy's root has no capability to read past file
+    permissions."""
+    private = tmp_path_factory.mktemp("media")
+    (private / PRIVATE_FILE).write_text("the private report")
+    public = tmp_path_factory.mktemp("media-public")
+    (public / "page.html").write_text("<script>alert(1)</script>")
+    (public / "uploads").mkdir()
+    (public / "uploads" / "index.html").write_text("someone's upload")
+    for path in [private, public, public / "uploads"]:
         path.chmod(0o755)
-    for path in [media / "page.html", media / "uploads" / "index.html"]:
+    for path in [private / PRIVATE_FILE, public / "page.html", public / "uploads" / "index.html"]:
         path.chmod(0o644)
+    return private, public
+
+
+def start_caddy(production_caddy, uploads, *network):
+    """Caddy with the project's Caddyfile over plain HTTP, locked down as in
+    compose.prod.yaml (its certificate folders in memory, not volumes). Returns its name
+    and the local port it answers on."""
+    private, public = uploads
     name = f"caddyfile-test-{uuid.uuid4().hex[:8]}"
     docker(
-        "run", "--detach", "--name", name, "--env", "SITE_ADDRESS=:80",
+        "run", "--detach", "--name", name, "--env", "SITE_ADDRESS=:80", *network,
         *lockdown(production_caddy),
         "--tmpfs", "/data", "--tmpfs", "/config",
         "--volume", f"{DEPLOY_DIR}:/etc/caddy:ro",
         "--volume", f"{TEMPLATES_DIR}:/srv/errors:ro",
-        "--volume", f"{media}:/srv/media:ro",
+        "--volume", f"{private}:/srv/media:ro",
+        "--volume", f"{public}:/srv/media-public:ro",
         "--publish", "127.0.0.1::80",
         production_caddy["image"],
     )  # fmt: skip
+    port = int(docker("port", name, "80/tcp").stdout.strip().rsplit(":", 1)[1])
+    deadline = time.monotonic() + 15
+    while not answers(port):
+        if time.monotonic() > deadline:
+            logs = docker("logs", name, check=False).stderr
+            docker("rm", "--force", name, check=False)
+            pytest.fail("Caddy didn't start:\n" + logs)
+        time.sleep(0.2)
+    return name, port
+
+
+@pytest.fixture(scope="module")
+def caddy(production_caddy, uploads):
+    """Caddy with no app behind it, as when the app is down. Yields its local port."""
+    name, port = start_caddy(production_caddy, uploads)
     try:
-        port = int(docker("port", name, "80/tcp").stdout.strip().rsplit(":", 1)[1])
-        deadline = time.monotonic() + 15
-        while not answers(port):
-            if time.monotonic() > deadline:
-                pytest.fail("Caddy didn't start:\n" + docker("logs", name, check=False).stderr)
-            time.sleep(0.2)
         yield port
     finally:
         docker("rm", "--force", name, check=False)
+
+
+@pytest.fixture(scope="module")
+def caddy_with_app(production_caddy, uploads):
+    """Caddy in front of a stand-in app that, like config/uploads.py for someone it
+    allows, answers every request by naming a private file in X-Accel-Redirect. Yields
+    Caddy's local port."""
+    suffix = uuid.uuid4().hex[:8]
+    network, app = f"caddyfile-test-{suffix}", f"caddyfile-test-app-{suffix}"
+    docker("network", "create", network)
+    try:
+        docker(
+            "run", "--detach", "--name", app, "--network", network, "--network-alias", "web",
+            production_caddy["image"], "caddy", "respond", "--listen", ":8000",
+            "--header", f"X-Accel-Redirect: /{quote(PRIVATE_FILE)}",
+        )  # fmt: skip
+        name, port = start_caddy(production_caddy, uploads, "--network", network)
+        try:
+            yield port
+        finally:
+            docker("rm", "--force", name, check=False)
+    finally:
+        docker("rm", "--force", app, check=False)
+        docker("network", "rm", network, check=False)
 
 
 def answers(port):
@@ -123,19 +168,37 @@ def test_the_health_checks_are_hidden_from_the_public(caddy, path):
     assert status == 404
 
 
-def test_uploads_are_downloads_that_cant_run_scripts(caddy):
-    status, headers, _ = request(caddy, "GET", "/media/page.html")
+def test_public_uploads_are_downloads_that_cant_run_scripts(caddy):
+    status, headers, _ = request(caddy, "GET", "/media-public/page.html")
     assert status == 200
     assert headers["Content-Disposition"] == "attachment"
     assert headers["X-Content-Type-Options"] == "nosniff"
     assert headers["Content-Security-Policy"] == "default-src 'none'; sandbox"
 
 
-@pytest.mark.parametrize("path", ["/media/", "/media/uploads/"])
+@pytest.mark.parametrize("path", ["/media-public/", "/media-public/uploads/"])
 def test_a_folder_is_never_listed_or_served_by_an_index_file(caddy, path):
     status, _, body = request(caddy, "GET", path)
     assert status == 404
     assert "someone's upload" not in body
+
+
+def test_caddy_never_serves_a_private_upload_by_its_path(caddy):
+    # /media/ goes to the app (down here), never straight to the folder.
+    status, _, body = request(caddy, "GET", f"/media/{quote(PRIVATE_FILE)}")
+    assert status == 502
+    assert "the private report" not in body
+
+
+def test_once_the_app_allows_it_caddy_sends_the_private_file_as_a_download(caddy_with_app):
+    status, headers, body = request(caddy_with_app, "GET", "/media/anything")
+    assert status == 200
+    assert body == "the private report"
+    assert headers["Content-Disposition"] == "attachment"
+    assert headers["X-Content-Type-Options"] == "nosniff"
+    assert headers["Content-Security-Policy"] == "default-src 'none'; sandbox"
+    assert headers["Cache-Control"] == "private"
+    assert "X-Accel-Redirect" not in headers  # the file's name inside stays hidden
 
 
 def test_a_request_over_the_size_limit_is_refused(caddy):

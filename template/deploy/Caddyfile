@@ -58,12 +58,13 @@
 		respond 404
 	}
 
-	# Uploaded files, straight from the media volume (when DJANGO_MEDIA_STORAGE is the
-	# default, filesystem). Must match MEDIA_URL in config/settings/files.py. Always as
-	# downloads, never shown as pages: an uploaded HTML or SVG file can't run scripts on
-	# this site. No folder listings, and no index.html served for a folder's address.
-	handle_path /media/* {
-		root * /srv/media
+	# Public uploads (the "public" storage), straight from the media_public volume. Must
+	# match PUBLIC_MEDIA_URL in config/settings/files.py. Always as downloads, never shown
+	# as pages: an uploaded HTML or SVG file can't run scripts on this site. No folder
+	# listings, and no index.html served for a folder's address. Private uploads
+	# (/media/) are never served from here: they go to the app, below.
+	handle_path /media-public/* {
+		root * /srv/media-public
 		header {
 			Content-Disposition attachment
 			X-Content-Type-Options nosniff
@@ -77,6 +78,24 @@
 	handle {
 		log_skip
 		reverse_proxy web:8000 {
+			# A private upload: the app checked who's asking and answered with the
+			# file's name in X-Accel-Redirect (config/uploads.py). Caddy sends that file
+			# from the media volume instead, so no Gunicorn worker streams it. Only the
+			# app can name a file this way: visitors' requests can't set it.
+			@private_upload header X-Accel-Redirect *
+			handle_response @private_upload {
+				root * /srv/media
+				rewrite * {rp.header.X-Accel-Redirect}
+				header {
+					Content-Disposition attachment
+					X-Content-Type-Options nosniff
+					Content-Security-Policy "default-src 'none'; sandbox"
+					Cache-Control private
+				}
+				file_server {
+					index ""
+				}
+			}
 			# Caddy takes in the first 1 MB of each request before passing it on (bigger
 			# ones pass on as they arrive; the limit above caps them), and up to 1 MB of
 			# each response at once, so a slow visitor ties up Caddy, which handles many

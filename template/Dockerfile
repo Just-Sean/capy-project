@@ -37,7 +37,7 @@ ENV PATH=/app/.venv/bin:$PATH \
 RUN groupadd --system app && useradd --system --gid app --uid 10001 --no-create-home app
 WORKDIR /app
 COPY --from=build /app /app
-RUN mkdir -p /app/media && chown app:app /app/media
+RUN mkdir -p /app/media /app/media-public && chown app:app /app/media /app/media-public
 
 USER app
 EXPOSE 8000

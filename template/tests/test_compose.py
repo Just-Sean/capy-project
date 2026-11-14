@@ -149,9 +149,10 @@ def test_production_secrets_come_only_from_env_files(project):
     for name in APP_SERVICES:
         assert env_files(services[name]) == [".env.production"]
     assert env_files(services["caddy"]) == [".env.caddy"]
-    # The only setting written here: the app is always behind Caddy. Not a secret.
+    # The only settings written here: the app is always behind Caddy, which sends private
+    # uploads for it. Not secrets.
     written = {name: set(s["environment"]) for name, s in services.items() if "environment" in s}
-    assert written == {"web": {"DJANGO_BEHIND_PROXY"}}
+    assert written == {"web": {"DJANGO_BEHIND_PROXY", "DJANGO_MEDIA_SENT_BY_PROXY"}}
 
 
 def test_only_caddy_is_published_and_the_app_is_always_behind_it(project):
@@ -161,13 +162,15 @@ def test_only_caddy_is_published_and_the_app_is_always_behind_it(project):
     ports = {(p["target"], p.get("protocol", "tcp")) for p in services["caddy"]["ports"]}
     assert ports == {(80, "tcp"), (443, "tcp"), (443, "udp")}
     assert services["web"]["environment"]["DJANGO_BEHIND_PROXY"] == "true"
+    assert services["web"]["environment"]["DJANGO_MEDIA_SENT_BY_PROXY"] == "true"
     assert [name for name, service in services.items() if "network_mode" in service] == []
 
 
 def test_caddy_serves_the_uploads_read_only_and_keeps_its_certificates(project):
     caddy = config(project, *PRODUCTION)["services"]["caddy"]
     mounts = {volume["target"]: volume for volume in caddy["volumes"]}
-    assert mounts["/srv/media"]["source"] == "media" and mounts["/srv/media"]["read_only"]
+    for target, volume in [("/srv/media", "media"), ("/srv/media-public", "media_public")]:
+        assert mounts[target]["source"] == volume and mounts[target]["read_only"]
     assert mounts["/data"]["type"] == "volume"  # certificates survive a restart
     # Folders, not single files: a mounted file stays the old copy after git replaces it.
     for target in ["/etc/caddy", "/srv/errors"]:
@@ -261,6 +264,8 @@ def test_the_worker_runs_jobs_with_the_apps_files_and_its_own_health_check(proje
     # Its own check, not the image's (which calls /healthz, which the worker doesn't serve).
     assert worker["healthcheck"]["test"] == ["CMD", "python", "-m", "config.health", "worker"]
     assert worker["volumes"] == services["web"]["volumes"]  # the same uploaded files
+    targets = {volume["source"]: volume["target"] for volume in worker["volumes"]}
+    assert targets == {"media": "/app/media", "media_public": "/app/media-public"}
 
 
 def test_the_worker_gets_time_to_finish_its_job(project):
@@ -285,7 +290,11 @@ def environment_of(service):
 
 def test_only_the_local_http_file_turns_the_https_settings_off(project):
     services = config(project, *LOCAL_HTTP, as_written=True)["services"]
-    assert set(environment_of(services["web"])) == {*HTTPS_SETTINGS, "DJANGO_BEHIND_PROXY"}
+    assert set(environment_of(services["web"])) == {
+        *HTTPS_SETTINGS,
+        "DJANGO_BEHIND_PROXY",
+        "DJANGO_MEDIA_SENT_BY_PROXY",
+    }
     assert environment_of(services["caddy"]) == {"SITE_ADDRESS": ":80"}  # plain HTTP
     others = ["db", "redis", "migrate", "worker"]
     assert [name for name in others if "environment" in services[name]] == []

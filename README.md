@@ -74,8 +74,7 @@ hand. Changes so far that need this:
   `client.force_login(user)`.
 - **Uploaded files:** nothing to add; uploads stay on local disk unless you set
   `DJANGO_MEDIA_STORAGE=s3` (see the project README's Uploaded files section).
-  `config/urls.py` now serves `/media/` in development: if your project already added
-  its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
+  If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
 - **Caddy in front:** production now runs Caddy, which handles HTTPS. Make `.env.caddy`:
@@ -89,9 +88,20 @@ hand. Changes so far that need this:
   proxy must then set `X-Forwarded-Proto` and add the visitor's address as the last
   `X-Forwarded-For` entry, because the app now always runs with
   `DJANGO_BEHIND_PROXY=true`, which `compose.prod.yaml` sets (remove it from
-  `.env.production`). Requests over 10 MB are now refused, and local uploads are served
-  publicly by Caddy: see the project README's Uploaded files section if some are
-  private. The next deploy recreates every container, and with them the logs.
+  `.env.production`). Requests over 10 MB are now refused. The next deploy recreates
+  every container, and with them the logs.
+- **Uploads are private:** `/media/` now goes to a view (`config/uploads.py`) that, by
+  default, lets only active staff download a file; everyone else gets a 404. Existing
+  files stay where they are and become private. Before updating, decide who may
+  download what and change `can_download()` to match (e.g. the file's owner), or your
+  users lose access to their files. Files anyone should see (pictures on public pages)
+  must move to the new `public` storage (`storage=public_storage`, at `/media-public/`):
+  change the field, make a migration, and move the files from `media/` to
+  `media-public/` (in production, from the `media` volume to the new `media_public`
+  one). If your project added its own `static(settings.MEDIA_URL, ...)` line to
+  `config/urls.py`, remove it: it would serve private files to anyone in development.
+  With S3, nothing moves; files stored as public go under `media-public/` in the bucket,
+  so add `arn:aws:s3:::BUCKET/media-public/*` to the key's permissions.
 - **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
   it), with `base.html`, the error pages and `proxy_error.html`. If your project already
   has its own root `templates/` folder, `copier update` shows a conflict for each file
