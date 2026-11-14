@@ -40,4 +40,4 @@
 
 `__init__.py` is empty and makes the folder a package.
 
-**A shared helper:** several files define the same small `last_line()` helper, which reads the last line a `manage.py` process printed. Moving it into one shared place is on the backlog.
+**A repeated helper:** several files define the same small `last_line()` helper, which reads the last line a `manage.py` process printed.

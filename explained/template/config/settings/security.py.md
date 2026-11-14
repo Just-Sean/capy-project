@@ -2,7 +2,7 @@
 
 **What it is:** HTTPS, the reverse proxy, security headers and the Content Security Policy (CSP).
 
-**HTTPS, on by default in production only.** Each setting can be changed with its own `DJANGO_SECURE_*` variable:
+**HTTPS, on by default in production only.** Each setting except preload can be changed with its own variable (`DJANGO_SECURE_SSL_REDIRECT`, `DJANGO_SESSION_COOKIE_SECURE`, `DJANGO_CSRF_COOKIE_SECURE`, `DJANGO_SECURE_HSTS_SECONDS`, `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS`):
 
 - **Redirect** plain HTTP to HTTPS.
 - **HTTPS-only** session and CSRF cookies.

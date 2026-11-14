@@ -17,7 +17,7 @@
 **The rules this layout follows:**
 
 - **Secure by default:** unset `DJANGO_ENV` means production. In production, required values have no fallback, so a misconfigured server **refuses to start** instead of running insecurely.
-- **Everything comes from the environment:** every setting can be overridden by its own environment variable, listed in `.env.example`.
+- **What differs per environment, or is secret, comes from the environment:** each such value has its own variable, listed in `.env.example`. Everything else (the apps, middleware, the CSP, password hashers, login-limit details, S3 options) is set in its topic file, in code.
 - **One file per setting:** a setting is set in only one topic file (`tests/test_settings_package.py` checks this). Where a setting differs in tests, the change sits right next to the setting.
 - **Only UPPERCASE names become settings,** so each file can use lowercase helper names freely.
 

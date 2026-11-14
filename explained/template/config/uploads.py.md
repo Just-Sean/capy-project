@@ -26,6 +26,6 @@
 
    Caddy's `(download_headers)` snippet must match them.
 
-**With S3 storage**, a field's `.url` is a signed link straight to the bucket that expires after an hour, so requests never reach this view and `can_download()` doesn't apply (see `settings/files.py`).
+**With S3 storage**, a field's `.url` is a signed link straight to the bucket that expires after an hour, so requests never reach this view and `can_download()` doesn't apply (see `settings/files.py`). **Anyone holding a link can download the file until it expires**, so only show a private file's link to those allowed to see it.
 
 **Checked by:** `tests/test_private_uploads.py`.

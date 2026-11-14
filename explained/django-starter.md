@@ -20,10 +20,9 @@ Later, `copier update` inside the project pulls in the starter's improvements.
 | `.pre-commit-config.yaml` | The starter repo's own commit check (gitleaks). |
 | `explained/` | This folder: a file-by-file explanation of the starter. It sits outside `template/`, so projects never get it. |
 
-**Not in git (local only, never copied into projects):**
+**Not in git:**
 
 - `.git/`: git's own history database.
-- `.claude/`, `template/.claude/`, `CLAUDE.local.md`, `.mcp.json`: local Claude Code settings and notes, kept out of git by `.git/info/exclude`.
 - `.ruff_cache/`: Ruff's cache, from running it here.
 
 **What a generated project contains:**
@@ -34,4 +33,4 @@ Later, `copier update` inside the project pulls in the starter's improvements.
 - **Development:** Docker Compose runs PostgreSQL 18 and Redis 8, and Django runs on your machine with `runserver`.
 - **Production:** Docker Compose runs Postgres, Redis, a migrate step, the app under Gunicorn, a background-job worker, and Caddy in front for HTTPS and rate limits.
 
-**How the pieces connect:** a visitor reaches Caddy, which passes the request to Gunicorn. Gunicorn runs Django, which uses PostgreSQL for data and Redis as its cache. Background jobs wait in PostgreSQL until the worker runs them. Every setting comes from environment variables (`.env` files), never from the code.
+**How the pieces connect:** a visitor reaches Caddy, which passes the request to Gunicorn. Gunicorn runs Django, which uses PostgreSQL for data and Redis as its cache. Background jobs wait in PostgreSQL until the worker runs them. Secrets and every value that differs between environments come from environment variables (`.env` files), never from the code; the rest of the settings are fixed in `config/settings/`.

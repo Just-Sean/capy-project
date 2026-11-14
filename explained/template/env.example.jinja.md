@@ -32,4 +32,4 @@
 - a line is something django-environ would misread
 - a true/false value isn't a word django-environ knows
 
-**Not in it:** the production-only Docker files' variables (`POSTGRES_*`, `REDIS_PASSWORD` and `SITE_ADDRESS`). Those live in `.env.postgres`, `.env.redis` and `.env.caddy`, which the README explains.
+**Not in it:** the production-only Docker files' variables (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `REDIS_PASSWORD` and `SITE_ADDRESS`). Those live in `.env.postgres`, `.env.redis` and `.env.caddy`, which the README explains.

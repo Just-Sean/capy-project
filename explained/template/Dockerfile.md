@@ -17,7 +17,7 @@ Development doesn't use it: there Django runs on your machine.
 
 - Creates an unprivileged user `app` (uid **10001**).
 - Copies `/app` from the build stage. The code and static files stay owned by root, so the app can't change them.
-- `media/` and `media-public/` are the only folders the app owns, so they're the only places it can write.
+- `media/` and `media-public/` are the only folders the app owns. With `compose.prod.yaml`'s read-only filesystem and in-memory `/tmp`, they're the only places it can write (the image on its own still allows `/tmp`).
 - Runs as `app`, on port 8000.
 - `HEALTHCHECK` calls `/healthz` every 30 seconds with Python's `urllib`, because curl isn't in the slim image.
 - `CMD`: `gunicorn config.wsgi --bind 0.0.0.0:8000`. Every other Gunicorn setting comes from `gunicorn.conf.py`.

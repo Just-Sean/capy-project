@@ -44,4 +44,4 @@
 7. **Everything else:** forwarded to the app (`web:8000`). Any `X-Accel-Redirect` the app sends here is dropped, so no other page can make Caddy send a file.
 8. **`handle_errors 502 503 504`:** when the app doesn't answer, visitors get `templates/proxy_error.html` with the real status. It's sent with the security headers, a strict CSP and `no-store`.
 
-**Checked by:** `tests/test_caddy.py`, which validates it with `caddy validate` and then runs it and tests each behavior above.
+**Checked by:** `tests/test_caddy.py`, which validates it with `caddy validate`, then runs it and tests the rate limits, request size, hidden health checks, uploads and error page. The log filtering, buffering and retries aren't tested.

@@ -29,7 +29,7 @@
 - **Start order:** `migrate` runs once, with no health check, before the app and worker start. Those two wait for Redis too.
 - **Every service:**
   - keeps limited logs
-  - restarts after a crash
+  - restarts after a crash, except `migrate`, which runs once
   - gets enough time to stop: the app longer than Gunicorn's 30 s, the worker 60 s to finish its job
 - The worker has the app's files and its own health check.
 

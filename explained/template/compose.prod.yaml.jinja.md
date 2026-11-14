@@ -60,7 +60,7 @@
 **Networks:**
 
 - **`backend`** is `internal`: the database and Redis can't reach the internet.
-- **`default`** has `enable_ipv6: true`. Docker then passes IPv6 visitors' own addresses to Caddy. Otherwise they'd all arrive from one address and share one rate limit. This needs Docker Engine 27 or later.
+- **`default`** has `enable_ipv6: true`. Docker then passes IPv6 visitors' own addresses to Caddy. Otherwise they'd all arrive from one address and share one rate limit. Docker Engine 27 or later picks the IPv6 address range by itself; older engines need one set by hand.
 
 **Volumes:** `pgdata`, `media`, `media_public`, `caddy_data` and `caddy_config`. Back up the first three (see the README's Backups section).
 

@@ -16,6 +16,6 @@
   - "Waited" counts from when the job was enqueued, or from its `run_after` if that's later.
   - Only the `default` queue and backend count, the ones `db_worker` serves.
 
-**Tied to django-tasks-db's internals:** `get_date_max()` is the value that package stores for "run as soon as possible". It's pinned to 0.13.0 for this reason, and `tests/test_readyz.py` fails if a new version changes it.
+**Tied to django-tasks-db's internals:** `get_date_max()` is the value that package stores for "run as soon as possible". This is one reason it's pinned to 0.13.0 (the other: pre-1.0, a new version could change its tables or worker), and `tests/test_readyz.py` fails if a new version changes it.
 
 **Why `logging.getLogger("config.health")` is named in full:** run as `python -m config.health`, the module's `__name__` would be `__main__`.

@@ -20,7 +20,7 @@
 - **`filesystem`** (the default): this machine's disk. In production that's the `media` and `media_public` Docker volumes. An upload never replaces an existing file with the same name: it gets a new name.
 - **`s3`:** S3 or any S3-compatible service (Cloudflare R2, Backblaze B2, MinIO...):
   - **`DJANGO_MEDIA_S3_BUCKET`** is required. `DJANGO_MEDIA_S3_REGION` and `DJANGO_MEDIA_S3_ENDPOINT_URL` are optional (the endpoint is for anything but AWS, and **must be `https://` in production**).
-  - Private uploads go under `media/` in the bucket, public ones under `media-public/`. **All are private in the bucket**, with **signed links that expire after an hour**.
+  - Private uploads go under `media/` in the bucket, public ones under `media-public/`. **All are private in the bucket**, with **signed links that expire after an hour**. `can_download()` doesn't apply: anyone holding a link can download the file until it expires, so only show a private file's link to those allowed to see it.
   - Files are never overwritten, and are always sent as downloads, so an uploaded HTML or SVG file can't run scripts.
   - **The keys never enter Django's settings.** boto3 reads `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` from the environment itself. Without them, the server's own role is used, which is safer than a long-lived key. Setting only one of the two is refused.
 - **Anything else** is refused at start.

@@ -15,4 +15,4 @@
 
 The slug's validator only accepts a lowercase letter followed by lowercase letters, digits and underscores, so it's always safe in file names, database names and Docker names.
 
-Copier saves the answers in the project's `.copier-answers.yml` (made from `template/{{_copier_conf.answers_file}}.jinja`), so `copier update` doesn't ask again.
+Copier saves the answers in the project's `.copier-answers.yml` (made from `template/{{_copier_conf.answers_file}}.jinja`), so `copier update` offers them as the defaults when it asks again (`--skip-answered` skips the questions already answered).
