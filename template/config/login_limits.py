@@ -1,4 +1,4 @@
-"""Login rate limiting, on top of django-axes (see "Login rate limiting" in settings.py).
+"""Login rate limiting, on top of django-axes (its settings: config/settings/users.py).
 
 django-axes locks out a username + address pair after a few failed logins. This module
 adds what it needs from the project:

@@ -43,9 +43,9 @@ the production image, installs exactly the same thing. Commit it whenever it cha
 
 ## Environments
 
-`DJANGO_ENV` picks the environment. There is one settings file,
-`config/settings.py`, and any individual setting can still be overridden by its
-own environment variable.
+`DJANGO_ENV` picks the environment. The settings are in `config/settings/`, one file
+per topic, shared by every environment, and any individual setting can still be
+overridden by its own environment variable.
 
 | `DJANGO_ENV` | Set by | Defaults |
 | --- | --- | --- |
@@ -267,7 +267,8 @@ docker compose -f compose.yaml -f compose.prod.yaml down -v   # DELETES producti
 
 ## Security
 
-These are set in `config/settings.py` and apply to every environment unless noted.
+These are set in `config/settings/` (mostly `security.py` and `users.py`) and apply to
+every environment unless noted.
 
 - **Passwords** are hashed with Argon2 (tests use a fast hasher instead). Passwords saved
   with an older hasher still work, and are re-hashed with Argon2 the next time that user
@@ -335,7 +336,7 @@ These are set in `config/settings.py` and apply to every environment unless note
   1. Make sure HTTPS works on the domain and every subdomain.
   2. Keep `DJANGO_SECURE_HSTS_SECONDS` at 31536000 or more and
      `DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS` true.
-  3. In `config/settings.py`, set `SECURE_HSTS_PRELOAD = True` and delete the
+  3. In `config/settings/security.py`, set `SECURE_HSTS_PRELOAD = True` and delete the
      `SILENCED_SYSTEM_CHECKS` line.
   4. In `tests/test_security_headers.py`, change
      `test_production_sends_hsts_for_a_year_without_preloading` to expect preloading.
@@ -417,7 +418,7 @@ uv run pytest --cov
 
 | Path | Purpose |
 | --- | --- |
-| `config/settings.py` | All settings, read from the environment |
+| `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py`, `database.py` (and the cache), `users.py` (passwords, login limits), `files.py`, `security.py`, `logs.py`. `__init__.py` combines them; each keeps its own test-only tweaks |
 | `config/urls.py` | The root URL map; each app adds its URLs here |
 | `config/middleware.py` | Answers `/healthz` before anything else runs |
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |

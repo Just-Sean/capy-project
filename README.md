@@ -10,7 +10,8 @@ gets only what has to exist on day one:
 - Docker Compose for development and production: a shared base, a development override,
   and a production file with secrets from env files and a separate migrate step
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID
-- One settings file driven by environment variables (django-environ), secure by default:
+- Settings driven by environment variables (django-environ), one file per topic in
+  `config/settings/`, secure by default:
   Argon2 passwords, login rate limiting (django-axes), a strict Content Security Policy
   with nonces, HSTS in production and the standard security headers
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
@@ -60,6 +61,10 @@ hand. Changes so far that need this:
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.
   Before updating, search your templates for `<script`, `<style`, `style=` and `on…=`,
   and see the project README's Security section.
+- **Settings split by topic:** `config/settings.py` became the `config/settings/`
+  package. `copier update` removes the old file; if your project had changed it, Copier
+  shows a conflict, and your own changes move into the matching topic file. Nothing
+  else changes: `DJANGO_SETTINGS_MODULE` is still `config.settings`.
 - **Postgres image:** projects made before the compose split used the pgvector image.
   The official Postgres image doesn't include pgvector, so a project that uses it must
   switch its image back in `compose.yaml`.
