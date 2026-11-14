@@ -3,12 +3,13 @@ and the strict Content Security Policy doesn't break the pages the project ships
 admin and, in development, Django's debug pages."""
 
 import re
+import tomllib
 
 import pytest
 from django.conf import settings
-from django.test import override_settings
+from django.test import Client, override_settings
 
-from tests.test_production_settings import run_manage
+from tests.test_production_settings import PROJECT_DIR, run_manage
 
 ADMIN = f"/{settings.ADMIN_URL}"
 NONCE = "'nonce-…'"  # stands in for the per-response nonce when comparing policies
@@ -35,6 +36,7 @@ BLOCKED = {
     "style attribute": re.compile(r"\sstyle\s*=", re.IGNORECASE),
     "event handler": re.compile(r"\son[a-z]+\s*=", re.IGNORECASE),
     "javascript: link": re.compile(r"javascript:", re.IGNORECASE),
+    "empty nonce": re.compile(r"\snonce=(?:\"\"|'')", re.IGNORECASE),  # a nonce that went missing
 }
 
 
@@ -79,6 +81,17 @@ def test_responses_send_the_security_headers(client, path, status):
     assert response["Referrer-Policy"] == "same-origin"
     assert response["Cross-Origin-Opener-Policy"] == "same-origin"
     assert "Content-Security-Policy" in response
+
+
+@pytest.mark.django_db
+def test_a_refused_form_sends_the_security_headers():
+    # A CSRF failure is answered by Django itself, before any view.
+    client = Client(enforce_csrf_checks=True)
+    response = client.post(f"{ADMIN}login/", {"username": "x", "password": "y"})
+    assert response.status_code == 403
+    assert response["X-Frame-Options"] == "DENY"
+    assert "Content-Security-Policy" in response
+    assert blocked_in(response.content.decode()) == {}
 
 
 @pytest.mark.django_db
@@ -172,6 +185,13 @@ def test_an_older_password_hash_still_works_and_gets_upgraded():
         "print(check_password('secret-1', old, setter=upgraded.append), upgraded == ['secret-1'])",
     )
     assert last_line(result) == "True True", result.stderr
+
+
+def test_argon2_is_installed_in_production_not_just_for_development():
+    # In the dev group only, tests would still pass but every production login would fail.
+    pyproject = tomllib.loads((PROJECT_DIR / "pyproject.toml").read_text())
+    dependencies = pyproject["project"]["dependencies"]
+    assert any(dependency.startswith("argon2-cffi") for dependency in dependencies)
 
 
 def test_development_serves_static_files_like_production():
