@@ -14,6 +14,7 @@ required values have no fallback, so a misconfigured server refuses to start ins
 running insecurely.
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -67,6 +68,7 @@ INSTALLED_APPS = [
     "accounts",
     "django.contrib.admin",
     "django.contrib.auth",
+    "axes",  # login rate limiting: see "Login rate limiting" below
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
@@ -88,6 +90,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",  # last: turns a lockout into a "too many attempts" page
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -158,6 +161,24 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
+# Login rate limiting (django-axes): after DJANGO_LOGIN_FAILURE_LIMIT failed logins for
+# the same username from the same IP address, that pair is locked out for
+# DJANGO_LOGIN_LOCKOUT_MINUTES (each further try during the lockout restarts it). Other
+# users and addresses aren't affected, and a successful login clears the count. It
+# works through Django's own login, so the admin and any later login page are covered.
+# Attempts and lockouts are in the admin; `manage.py axes_reset` clears them early.
+AUTHENTICATION_BACKENDS = [
+    "axes.backends.AxesStandaloneBackend",  # first: refuses locked-out logins
+    "django.contrib.auth.backends.ModelBackend",
+]
+AXES_FAILURE_LIMIT = env.int("DJANGO_LOGIN_FAILURE_LIMIT", default=5)
+AXES_COOLOFF_TIME = timedelta(minutes=env.int("DJANGO_LOGIN_LOCKOUT_MINUTES", default=15))
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]  # the pair, not either alone
+AXES_RESET_ON_SUCCESS = True
+AXES_ENABLE_RETRY_AFTER_HEADER = True  # tells clients when they may try again
+AXES_CLIENT_IP_CALLABLE = "config.client_ip.client_ip"  # trusts the proxy only if declared
+AXES_VERBOSE = False  # its log lines name the user and IP; attempts are kept in the admin
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {
@@ -206,8 +227,11 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
 SECURE_HSTS_PRELOAD = False  # preloading is hard to undo; opt in deliberately per project
 SILENCED_SYSTEM_CHECKS = ["security.W021"]  # the "HSTS preload is off" warning, by design
 
-# Only behind a proxy you control (nginx, Caddy, a load balancer) that sets this header.
-if env.bool("DJANGO_BEHIND_PROXY", default=False):
+# Only behind a proxy you control (nginx, Caddy, a load balancer) that sets these
+# headers: then X-Forwarded-Proto says whether the visitor used HTTPS, and the last
+# X-Forwarded-For entry is the visitor's address (see config/client_ip.py).
+BEHIND_PROXY = env.bool("DJANGO_BEHIND_PROXY", default=False)
+if BEHIND_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 X_FRAME_OPTIONS = "DENY"  # never allow this site inside a frame
