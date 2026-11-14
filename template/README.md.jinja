@@ -170,15 +170,26 @@ Caddy (`deploy/Caddyfile`) is the only part the internet reaches, on ports 80 an
 - **When the app doesn't answer** (a restart, or it's down): `templates/proxy_error.html`
   with the real status (502, 503 or 504).
 - **`/healthz` and `/readyz`:** a 404 from outside (see the health checks below).
+- **Rate limits:** per visitor address, 600 requests a minute, and 30 form posts a
+  minute (the admin login, `/csp-report/`, any form). Over that, a 429 with
+  `Retry-After`. The app's login lockouts (django-axes) apply on top. Change them in
+  `rate_limit` in `deploy/Caddyfile`. Behind a CDN or load balancer every visitor
+  shares its address, so raise them or key them on the header it sets.
 
 The app and the worker run locked down: no Linux capabilities, a read-only filesystem
 (uploads go to the `media` and `media_public` volumes, temporary files to an in-memory
-`/tmp`). Redis runs the same way, as its own non-root user with a login. Caddy too,
-with one capability to listen on ports 80 and 443, but as the container's root user:
-the official image runs that way, and without other capabilities that root can only
-read and write Caddy's own files. The database and Redis are only on an internal network with no published port,
-and the app has no published port: everything reaches it through Caddy. Docker Compose
-2.24.4 or later is needed (`compose.local-http.yaml` uses `!override`).
+`/tmp`). Redis runs the same way, as its own non-root user with a login. Caddy too, as
+its own non-root user, from an image built by `deploy/caddy.Dockerfile`: the official
+image plus the rate-limit plugin. `compose.prod.yaml` lets unprivileged users listen
+on ports 80 and 443 inside Caddy's container (`net.ipv4.ip_unprivileged_port_start`),
+so it needs no capability for that. The database and Redis are only on an internal
+network with no published port, and the app has no published port: everything reaches
+it through Caddy. Docker Compose 2.24.4 or later is needed (`compose.local-http.yaml`
+uses `!override`).
+
+To update Caddy, change the version in both `FROM` lines of `deploy/caddy.Dockerfile`,
+and the plugin's version on the `xcaddy build` line to a release that supports it,
+then deploy as usual (`up --build` rebuilds it).
 
 Settings and secrets come from four files next to it, which git and the image all ignore:
 
@@ -897,7 +908,7 @@ uv run pytest --cov
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |
-| `tests/test_caddy.py` | Runs the real Caddy image with `deploy/Caddyfile`, locked down as in production, and proves the config is valid, the health checks are hidden, public uploads are downloads that can't run scripts, folders are never listed, a private upload is never served by its path but is sent (as a download, with the app's cookies) once the app names it, and only for `/media/` addresses, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
+| `tests/test_caddy.py` | Builds production's Caddy image and runs it with `deploy/Caddyfile`, locked down as in production, and proves it runs as its own user, the config is valid, too many requests or form posts from one address get a 429 (while pages still load after the post limit), the health checks are hidden, public uploads are downloads that can't run scripts, folders are never listed, a private upload is never served by its path but is sent (as a download, with the app's cookies) once the app names it, and only for `/media/` addresses, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
 | `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
@@ -913,7 +924,8 @@ uv run pytest --cov
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
 | `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app, the job worker and Caddy, with settings and secrets from `.env.production`, `.env.postgres`, `.env.redis` and `.env.caddy`, and at most 50 MB of logs per container |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off and has Caddy answer on `localhost:8000` without a certificate. Never on a server |
-| `deploy/Caddyfile` | Caddy's settings: HTTPS, forwarding to the app, the request size limit, public uploads, sending private uploads the app allowed, all as downloads, the proxy error page, hiding the health checks, its request log |
+| `deploy/caddy.Dockerfile` | Production's Caddy image: the official one plus the rate-limit plugin, running as its own non-root user |
+| `deploy/Caddyfile` | Caddy's settings: HTTPS, rate limits, forwarding to the app, the request size limit, public uploads, sending private uploads the app allowed, all as downloads, the proxy error page, hiding the health checks, its request log |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |

@@ -9,6 +9,8 @@
 	log default {
 		exclude admin.api
 	}
+	# The rate limits (below) run first, before anything else answers.
+	order rate_limit before basic_auth
 }
 
 # The basic security headers on what Caddy serves itself (uploads, the error page). "?"
@@ -63,6 +65,28 @@
 				request>headers delete
 				resp_headers delete
 			}
+		}
+	}
+
+	# Rate limits per visitor address, so one address can't flood the site: a 429 with
+	# Retry-After once it's over. Every request counts toward the first; form posts (the
+	# admin login, /csp-report/, any form) also toward a much stricter one, against
+	# password guessing and report floods. Login lockouts in the app (django-axes) still
+	# apply on top. Behind a CDN or load balancer every visitor would share its address:
+	# raise these or key them on the header it sets.
+	rate_limit {
+		zone per_visitor {
+			key {remote_host}
+			events 600
+			window 1m
+		}
+		zone form_posts {
+			match {
+				method POST
+			}
+			key {remote_host}
+			events 30
+			window 1m
 		}
 	}
 

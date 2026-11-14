@@ -132,21 +132,28 @@ services:
     # after this is killed and stays marked as running, so keep each job well under 60s.
     stop_grace_period: 60s
 
-  # The reverse proxy: HTTPS (it gets and renews the certificate itself), uploaded files,
-  # and the site's own page when the app doesn't answer. See deploy/Caddyfile. The only
-  # service the internet reaches. Locked down: no Linux capabilities except binding ports
-  # 80 and 443, no way to gain privileges, a read-only filesystem apart from its volumes.
-  # (The official image runs as root inside the container; with no other capabilities,
-  # that root can't do more than read and write its own files.)
+  # The reverse proxy: HTTPS (it gets and renews the certificate itself), rate limits,
+  # uploaded files, and the site's own page when the app doesn't answer. See
+  # deploy/Caddyfile. The only service the internet reaches. Built from
+  # deploy/caddy.Dockerfile (Caddy with the rate-limit plugin). Locked down like the app:
+  # its own unprivileged user, no Linux capabilities, no way to gain privileges, a
+  # read-only filesystem apart from its volumes.
   caddy:
-    image: caddy:2.11.9-alpine
+    build:
+      context: ./deploy
+      dockerfile: caddy.Dockerfile
+    image: {{ project_slug }}-caddy
     env_file: .env.caddy
     logging: *logging
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
     security_opt: ["no-new-privileges:true"]
     read_only: true
     tmpfs: [/tmp]
+    # Lets its unprivileged user listen on ports 80 and 443 inside its own network
+    # namespace, without a capability. (Docker's default since 20.10; set here so it
+    # doesn't depend on that.)
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
     # Started once the app has started, not waiting for it to be healthy: if the app
     # can't start, visitors still get the error page instead of no answer at all.
     depends_on:

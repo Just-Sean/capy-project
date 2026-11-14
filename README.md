@@ -89,6 +89,19 @@ hand. Changes so far that need this:
   `DJANGO_BEHIND_PROXY=true`, which `compose.prod.yaml` sets (remove it from
   `.env.production`). Requests over 10 MB are now refused. The next deploy recreates
   every container, and with them the logs.
+- **Caddy rate limits, and Caddy no longer root:** Caddy is now built from
+  `deploy/caddy.Dockerfile` (adds the rate-limit plugin) and runs as its own user.
+  Visitors get a 429 after 600 requests or 30 form posts a minute from one address (see
+  the project README's Production section). If production already ran Caddy, its
+  certificate volumes are owned by root, which the new user can't use, so hand them
+  over once before deploying (`SLUG` is your project's slug, as in `SLUG-production`):
+
+  ```bash
+  docker compose -f compose.yaml -f compose.prod.yaml build caddy
+  docker run --rm --user root -v SLUG-production_caddy_data:/data -v SLUG-production_caddy_config:/config SLUG-caddy chown -R caddy:caddy /data /config
+  docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
+  ```
+
 - **Uploads are private:** `/media/` now goes to a view (`config/uploads.py`) that, by
   default, lets only active staff download a file; everyone else gets a 404. Existing
   files stay where they are and become private. Before updating, decide who may
