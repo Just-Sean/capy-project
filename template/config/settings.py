@@ -14,6 +14,7 @@ required values have no fallback, so a misconfigured server refuses to start ins
 running insecurely.
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 import environ
@@ -67,6 +68,7 @@ INSTALLED_APPS = [
     "accounts",
     "django.contrib.admin",
     "django.contrib.auth",
+    "axes",  # login rate limiting: see "Login rate limiting" below
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
@@ -88,6 +90,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "axes.middleware.AxesMiddleware",  # last: turns a lockout into a "too many attempts" page
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -158,6 +161,40 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
 
+# Login rate limiting (django-axes, plus config/login_limits.py). Two limits, each over
+# DJANGO_LOGIN_LOCKOUT_MINUTES (each further try during a lockout restarts it):
+#   - DJANGO_LOGIN_FAILURE_LIMIT failed logins for one username from one address lock
+#     that pair out. Someone elsewhere can't lock a real user out this way.
+#   - DJANGO_LOGIN_IP_FAILURE_LIMIT failed logins from one address, whatever usernames
+#     were tried, lock that address out. Higher, so a shared office address is fine.
+# A successful login clears its pair's count. Django's own login views (the admin,
+# LoginView) are covered; custom code must call authenticate(request, ...) with the
+# request, and tests should use client.force_login(user) instead of client.login(...).
+# Failed attempts are kept in the database (not Redis, which can be emptied) until their
+# lockout time has passed, and listed in the admin; `manage.py axes_reset` clears them.
+AUTHENTICATION_BACKENDS = [
+    "config.login_limits.IPLoginLimitBackend",  # refuses addresses over their limit
+    "axes.backends.AxesStandaloneBackend",  # refuses locked-out username + address pairs
+    "django.contrib.auth.backends.ModelBackend",  # the real login
+]
+AXES_FAILURE_LIMIT = env.int("DJANGO_LOGIN_FAILURE_LIMIT", default=5)
+LOGIN_IP_FAILURE_LIMIT = env.int("DJANGO_LOGIN_IP_FAILURE_LIMIT", default=30)
+LOGIN_LOCKOUT_MINUTES = env.int("DJANGO_LOGIN_LOCKOUT_MINUTES", default=15)
+if min(AXES_FAILURE_LIMIT, LOGIN_IP_FAILURE_LIMIT, LOGIN_LOCKOUT_MINUTES) < 1:
+    raise ImproperlyConfigured(
+        "DJANGO_LOGIN_FAILURE_LIMIT, DJANGO_LOGIN_IP_FAILURE_LIMIT and "
+        "DJANGO_LOGIN_LOCKOUT_MINUTES must each be at least 1."
+    )
+AXES_COOLOFF_TIME = timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]  # the pair, not either alone
+AXES_RESET_ON_SUCCESS = True
+AXES_ENABLE_RETRY_AFTER_HEADER = True  # tells clients when they may try again
+AXES_CLIENT_IP_CALLABLE = "config.login_limits.client_ip"  # trusts a proxy only if declared
+AXES_DISABLE_ACCESS_LOG = True  # don't keep a record of every successful login
+# Shorter log lines. Failures and lockouts are still logged, with these hidden.
+AXES_SENSITIVE_PARAMETERS = ["username", "ip_address"]
+AXES_VERBOSE = False
+
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
     {
@@ -206,8 +243,11 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("DJANGO_SECURE_HSTS_INCLUDE_SUBDOMAINS
 SECURE_HSTS_PRELOAD = False  # preloading is hard to undo; opt in deliberately per project
 SILENCED_SYSTEM_CHECKS = ["security.W021"]  # the "HSTS preload is off" warning, by design
 
-# Only behind a proxy you control (nginx, Caddy, a load balancer) that sets this header.
-if env.bool("DJANGO_BEHIND_PROXY", default=False):
+# Only behind a proxy you control (nginx, Caddy, a load balancer) that sets these
+# headers: then X-Forwarded-Proto says whether the visitor used HTTPS, and the last
+# X-Forwarded-For entry is the visitor's address (see config/login_limits.py).
+BEHIND_PROXY = env.bool("DJANGO_BEHIND_PROXY", default=False)
+if BEHIND_PROXY:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 X_FRAME_OPTIONS = "DENY"  # never allow this site inside a frame
