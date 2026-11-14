@@ -84,7 +84,9 @@ def test_production_hashes_passwords_with_argon2():
 
 def test_older_password_hashes_still_work_and_get_upgraded():
     # Django re-hashes with the first hasher whenever a password checks against another.
-    hashers = run_manage("shell", "-c", "from django.conf import settings as s; print(s.PASSWORD_HASHERS)")
+    hashers = run_manage(
+        "shell", "-c", "from django.conf import settings as s; print(s.PASSWORD_HASHERS)"
+    )
     listed = hashers.stdout.strip().splitlines()[-1]
     assert listed.startswith("['django.contrib.auth.hashers.Argon2PasswordHasher'"), hashers.stderr
     assert "PBKDF2PasswordHasher" in listed

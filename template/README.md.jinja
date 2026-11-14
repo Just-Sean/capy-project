@@ -257,6 +257,27 @@ docker compose -f compose.yaml -f compose.prod.yaml logs      # production's log
 docker compose -f compose.yaml -f compose.prod.yaml down -v   # DELETES production's database and uploads
 ```
 
+## Security
+
+These are set in `config/settings.py` and apply to every environment unless noted.
+
+- **Passwords** are hashed with Argon2. Passwords saved with an older hasher still work,
+  and are re-hashed with Argon2 the next time that user logs in.
+- **Security headers** on every response: `X-Frame-Options: DENY`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and
+  `Cross-Origin-Opener-Policy: same-origin`. Production adds HTTPS-only cookies and
+  HSTS (one year, subdomains included).
+- **HSTS preload is off on purpose.** Being on browsers' preload list is hard to undo, so
+  each project opts in when it's ready: set `SECURE_HSTS_PRELOAD = True` and remove
+  `"security.W021"` from `SILENCED_SYSTEM_CHECKS`.
+- **Content Security Policy** (`SECURE_CSP`): browsers only run scripts and styles from
+  this site, plus inline ones marked with the page's nonce, so code injected into a
+  page doesn't run. Write inline code as `<script nonce="{{ '{{' }} csp_nonce {{ '}}' }}">`, and
+  never use `style="..."` attributes or `onclick=` handlers: put them in a static CSS or
+  JS file. A view that needs something from another site (a map, a video) can loosen the
+  policy for itself only, with the decorators in `django.views.decorators.csp`. The
+  browser's console shows what was blocked and why.
+
 ## Checks
 
 ### On every commit (pre-commit)
@@ -344,6 +365,7 @@ uv run pytest --cov
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
+| `tests/test_security_headers.py` | Proves every page sends the security headers and a strict CSP with a fresh nonce, the admin has nothing that CSP would block, passwords use Argon2, and production sends HSTS without preloading |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |

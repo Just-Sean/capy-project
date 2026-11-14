@@ -10,7 +10,8 @@ gets only what has to exist on day one:
 - Docker Compose for development and production: a shared base, a development override,
   and a production file with secrets from env files and a separate migrate step
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID
-- One settings file driven by environment variables (django-environ), secure by default
+- One settings file driven by environment variables (django-environ), secure by default:
+  Argon2 passwords, a strict Content Security Policy and the security headers
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
 - pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
 - pre-commit (gitleaks and Ruff on every commit) and pip-audit
