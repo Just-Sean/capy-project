@@ -6,9 +6,15 @@ name: {{ project_slug }}
 
 services:
   db:
-    image: postgres:18-trixie        # official Postgres 18 on Debian trixie
+    # Official Postgres 18 on Debian trixie. Extensions such as pgvector are added per
+    # project when one needs them.
+    image: postgres:18-trixie
     healthcheck:
-      # $$ passes the variables to the container's shell instead of Compose.
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 2s
-      retries: 20
+      # Over TCP (-h), the way the app connects: on a new database Postgres first runs
+      # a setup server that only answers locally. $$ passes the variables to the
+      # container's shell instead of Compose.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      start_period: 60s              # time to start, or to recover after a crash
+      start_interval: 2s             # checked often while starting, so `up` is quick
+      interval: 10s
+      retries: 5

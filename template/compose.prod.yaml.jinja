@@ -1,31 +1,45 @@
-# Production: the app image, its migrate step and Postgres. Run it with
-#   docker compose -f compose.yaml -f compose.prod.yaml up --build -d
+# Production: Postgres, the migrate step and the app. Run it with
+#   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
 # Secrets come from two files next to this one, never from this file or the image
 # (git and .dockerignore both ignore them; see the README for what goes in each):
 #   .env.production  Django's settings, including DATABASE_URL
-#   .env.postgres    POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+#   .env.postgres    the database login: user, password and database name
 
 # Its own project name, so production's containers and database volume are separate
 # from development's even on the same machine.
 name: {{ project_slug }}-production
 
+# The app image, as both the migrate step and the app run it. Locked down: no Linux
+# capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
+# and the uploads volume.
 x-app: &app
   build: .
   image: {{ project_slug }}-web
   env_file: .env.production
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  read_only: true
+  tmpfs: [/tmp]
+  networks: [backend]
 
 services:
   db:
     env_file: .env.postgres
+    security_opt: ["no-new-privileges:true"]
+    # No published port and only the internal network: the app reaches it, nothing else.
+    networks: [backend]
     volumes:
       - pgdata:/var/lib/postgresql
-    restart: unless-stopped            # no ports: only the app reaches the database
+    restart: unless-stopped
 
   # Applies migrations, then exits. The app starts only if it succeeded, so new code
-  # never runs against an old database.
+  # never runs against an old database. On a redeploy the old app keeps serving while
+  # this runs, so migrations must also work with the old code (see the README).
   migrate:
     <<: *app
     command: ["python", "manage.py", "migrate", "--noinput"]
+    healthcheck:
+      disable: true                    # it never serves /healthz
     depends_on:
       db:
         condition: service_healthy
@@ -35,12 +49,21 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    # backend reaches the database; default lets Docker publish the port.
+    networks: [backend, default]
     ports:
       - "127.0.0.1:8000:8000"          # this machine only: a reverse proxy forwards to it
+    volumes:
+      - media:/app/media               # uploaded files (the rest of the app is read-only)
     restart: unless-stopped
     # Longer than Gunicorn's graceful_timeout (30 s), so requests in progress finish
     # before Docker force-stops the container.
     stop_grace_period: 35s
 
+networks:
+  backend:
+    internal: true                     # no internet access from the database
+
 volumes:
   pgdata:
+  media:

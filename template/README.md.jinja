@@ -36,7 +36,7 @@ the production image, installs exactly the same thing. Commit it whenever it cha
 | pip-audit | Check the packages for known vulnerabilities: see [Before every pull request](#before-every-pull-request) |
 | `uv run ruff check .` / `uv run ruff format .` | Check for problems / format the code |
 | `uv add <package>` | Add a dependency (updates pyproject.toml and uv.lock) |
-| `docker compose -f compose.yaml -f compose.prod.yaml up --build` | Build and run production (migrate step, then the app) at http://localhost:8000/staff/: see [Production](#production-the-real-image-run-locally) |
+| `docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build` | Build and run production on this machine (migrate step, then the app) at http://localhost:8000/staff/: see [Production](#production-the-real-image-run-locally) |
 | `copier update` | Pull in improvements from the starter template |
 
 ## Environments
@@ -49,7 +49,7 @@ own environment variable.
 | --- | --- | --- |
 | `development` | `.env` on your machine | Debug on, plain HTTP, local secret key, `admin/` |
 | `test` | pytest, automatically (pytest-env) | Debug off, plain HTTP, fast password hashing |
-| `production` | Nothing: it's what unset means | HTTPS-only with HSTS, debug forbidden, required values below |
+| `production` | Nothing: it's what unset means (with Docker Compose, the values come from `.env.production`) | HTTPS-only with HSTS, debug forbidden, required values below |
 
 Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
 `DJANGO_ADMIN_URL` or `DATABASE_URL` is missing, if the admin URL is `admin/`,
@@ -71,10 +71,11 @@ uv run python manage.py runserver     # start Django at http://localhost:8000/ad
 settings: the dev login `app`/`app`, and port 5432 open to this machine only).
 
 **Port 5432 already in use** (for example by a Postgres installed on your machine):
-`docker compose up` fails with "port is already allocated". Pick another port in `.env`
-and change `DATABASE_URL` to match, then start it again:
+`docker compose up -d db` fails with an error about port 5432 ("address already in
+use" or "port is already allocated"). Pick another port: in `.env`, add the first line
+and change your `DATABASE_URL` line to the second, then start it again:
 
-```bash
+```dotenv
 POSTGRES_PORT=5433
 DATABASE_URL=postgres://app:app@localhost:5433/{{ project_slug }}
 ```
@@ -118,51 +119,64 @@ migrations and exits, then the app (it only starts if `migrate` succeeded). It's
 separate Compose project (`{{ project_slug }}-production`) with its own database, so it
 never touches your development data.
 
+The app runs locked down: no Linux capabilities, a read-only filesystem (uploads go to
+the `media` volume), and the database only on an internal network with no published
+port. The app is published on this machine only (127.0.0.1:8000), for a reverse proxy.
+
 Secrets come from two files next to it, which git and the image both ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
-| `.env.production` | the app and `migrate` | Django's settings from `.env.example` (at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL`) |
-| `.env.postgres` | Postgres | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
+| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL` and `DATABASE_URL`. Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
+| `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
 
 **To try it on your machine,** make both files once. This makes a random database
-password and secret key, and turns the HTTPS settings off because it runs over plain
-HTTP. A real server leaves those four HTTPS lines out:
+password and secret key; the files are created readable only by you:
 
 ```bash
-PASSWORD=$(uv run python -c "import secrets; print(secrets.token_urlsafe(24))")
-SECRET_KEY=$(uv run python -c "import secrets; print(secrets.token_urlsafe(50))")
-cat > .env.postgres <<EOF
+(
+  umask 077                                    # new files: only you can read them
+  PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
+  cat > .env.postgres <<EOF
 POSTGRES_USER=app
 POSTGRES_PASSWORD=$PASSWORD
 POSTGRES_DB={{ project_slug }}
 EOF
-cat > .env.production <<EOF
+  cat > .env.production <<EOF
 DJANGO_SECRET_KEY=$SECRET_KEY
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 DJANGO_ADMIN_URL=staff/
 DATABASE_URL=postgres://app:$PASSWORD@db:5432/{{ project_slug }}
-DJANGO_SECURE_SSL_REDIRECT=false
-DJANGO_SESSION_COOKIE_SECURE=false
-DJANGO_CSRF_COOKIE_SECURE=false
-DJANGO_SECURE_HSTS_SECONDS=0
 EOF
-chmod 600 .env.postgres .env.production      # only you can read them
+)
 ```
 
-Stop `runserver` first, because both use port 8000. Then start:
+Postgres only uses that password when it first creates the production database. If
+you make the files again later, delete that database first (all its data is lost):
+`docker compose -f compose.yaml -f compose.prod.yaml down -v`.
+
+Stop `runserver` first, because both use port 8000. On your machine the site runs over
+plain HTTP, so `compose.local-http.yaml` switches the HTTPS settings off. It's only
+for this local check, and never goes on a server:
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml up --build      # Ctrl+C stops it
-# or in the background:
-docker compose -f compose.yaml -f compose.prod.yaml up --build -d
+docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build   # Ctrl+C stops it
+# or in the background (it keeps running, even after a restart, until you stop it):
+docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build -d --wait
 ```
 
-Make an admin login (production has its own database), then open
-<http://localhost:8000/staff/>:
+With it running (in another terminal, or started with `-d`), make an admin login
+(production has its own database), then open <http://localhost:8000/staff/>:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py createsuperuser
+```
+
+If the app doesn't start, the `migrate` step probably failed. See why with:
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml logs migrate web
 ```
 
 Stop:
@@ -171,6 +185,17 @@ Stop:
 docker compose -f compose.yaml -f compose.prod.yaml down      # remove the containers (data is kept)
 ```
 
+**On a real server** the same two files hold the real values: the site's domain in
+`DJANGO_ALLOWED_HOSTS`, and `DJANGO_BEHIND_PROXY=true` when a reverse proxy (Caddy,
+nginx) handles HTTPS, or the HTTPS redirect loops forever. Start it without
+`compose.local-http.yaml`, so the HTTPS protections stay on:
+`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`.
+
+Each run of that command migrates first, while the old app keeps serving, so a
+migration must still work with the code already running (add things first, remove
+them in a later release). There is no rollback to a previous image yet; a later
+version of the starter adds versioned images and deploy steps.
+
 <http://localhost:8000/healthz> returns `ok`. It never touches the database and
 answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balancers
 (which call it by IP) can poll it.
@@ -178,8 +203,8 @@ answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balanc
 **Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
 
 - **Workers:** set `WEB_CONCURRENCY` in the app's environment, about 2 x CPU cores + 1
-  (default 1). For example under `environment:` in a compose file, or `Environment=`
-  in a systemd service.
+  (default 1): in `.env.production` with Docker Compose, or `Environment=` in a
+  systemd service.
 - **Timeouts and worker recycling:** edit `gunicorn.conf.py`.
 - **Where it listens:** in Docker, on port 8000 of the container (set by the
   Dockerfile). Run directly on a Linux server, only on
@@ -203,7 +228,8 @@ docker compose ps                     # list development's running containers
 docker compose down                   # stop and remove development's containers (data is kept)
 docker compose down -v                # also DELETE development's database: all data is lost
 docker compose -f compose.yaml -f compose.prod.yaml ps        # the same for production
-docker compose -f compose.yaml -f compose.prod.yaml down -v   # DELETES production's database
+docker compose -f compose.yaml -f compose.prod.yaml logs      # production's logs
+docker compose -f compose.yaml -f compose.prod.yaml down -v   # DELETES production's database and uploads
 ```
 
 ## Checks
@@ -291,17 +317,19 @@ uv run pytest --cov
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
-| `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file through (`.env`, `.env.local`, `config/.env`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any `.env` file into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
+| `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
+| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database internal and gives Gunicorn time to stop |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
 | `compose.yaml` | What every environment shares: Postgres 18 and its health check |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and Postgres port |
 | `compose.prod.yaml` | Production: Postgres, the `migrate` step and the app, with secrets from `.env.production` and `.env.postgres` |
+| `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
-| `.gitignore`, `.dockerignore` | Files kept out of git and out of the image. Every file whose name starts with `.env` (including `.envrc`), in any folder, is kept out of both; git keeps only `.env.example`. Private keys (`*.pem`, `*.key`) are kept out of both too. To commit another such file, add a `!` line for it to `.gitignore` |
+| `.gitignore`, `.dockerignore` | Files kept out of git and out of the image. Every file whose name starts with `.env` (including `.envrc`), in any folder, is kept out of both; git keeps only `.env.example`. Private keys, certificates, keystores and SSH keys (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `id_rsa` and the like) are kept out of both too. To commit another such file, add a `!` line for it to `.gitignore` |
 | `.copier-answers.yml` | Lets `copier update` find the template; don't edit |
 
 ## Conventions

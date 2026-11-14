@@ -1,0 +1,11 @@
+# Local check only: runs production on this machine over plain HTTP, so the HTTPS
+# settings are switched off here instead of in .env.production. Never use it on a
+# server. See "Production (the real image, run locally)" in the README:
+#   docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build
+services:
+  web:
+    environment:
+      DJANGO_SECURE_SSL_REDIRECT: "false"
+      DJANGO_SESSION_COOKIE_SECURE: "false"
+      DJANGO_CSRF_COOKIE_SECURE: "false"
+      DJANGO_SECURE_HSTS_SECONDS: "0"

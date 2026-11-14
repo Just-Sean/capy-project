@@ -10,8 +10,16 @@ htmlcov
 # Every file whose name starts with .env, in any folder (no exceptions: the image
 # doesn't need .env.example). Keep the **/ or Docker only matches the top folder.
 **/.env*
+# Private keys, certificates and keystores, and SSH keys, in any folder.
 **/*.pem
 **/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/id_rsa
+**/id_dsa
+**/id_ecdsa
+**/id_ed25519
 staticfiles
 media
 tests

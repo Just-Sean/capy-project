@@ -1,5 +1,5 @@
 """No .env file reaches git except .env.example, and none reaches the Docker image.
-Private keys (*.pem, *.key) reach neither."""
+Private keys, certificates, keystores and SSH keys reach neither."""
 
 import os
 import shutil
@@ -18,8 +18,27 @@ SECRET_FILES = [
     "config/.env",
     "server.key",
     "certs/site.pem",
+    "bundle.p12",
+    "certs/bundle.pfx",
+    "keystore.jks",
+    "id_rsa",
+    "deploy/id_dsa",
+    "id_ecdsa",
+    "deploy/id_ed25519",
 ]
-SECRET_PATTERNS = (".env", ".pem", ".key")
+# Each needs its own "**/" rule in .dockerignore.
+SECRET_PATTERNS = [
+    ".env",
+    ".pem",
+    ".key",
+    ".p12",
+    ".pfx",
+    ".jks",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+]
 EXAMPLE = ".env.example"
 
 # Only the copied file's rules count: not this machine's own git settings or ignore list.
@@ -68,7 +87,8 @@ def test_dockerignore_secret_rules_cover_every_folder():
         for line in lines
         if not line.startswith("#") and any(pattern in line for pattern in SECRET_PATTERNS)
     ]
-    assert len(rules) >= len(SECRET_PATTERNS), f".dockerignore is missing secret rules: {rules}"
+    missing = [pattern for pattern in SECRET_PATTERNS if not any(pattern in r for r in rules)]
+    assert missing == [], f".dockerignore has no rule for: {missing}"
     assert all(line.startswith("**/") for line in rules), (
         f"Start these with **/ so Docker matches them in every folder: {rules}"
     )
