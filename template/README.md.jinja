@@ -186,8 +186,9 @@ docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b
 ```
 
 The **every file** scan also reads files git ignores, such as your local `.env` and
-`.venv/`. A finding there isn't a committed secret (`.env` is never committed); the
-**whole history** scan shows what was actually committed.
+`.venv/`. A finding there isn't a committed secret (git ignores `.env` files, so they
+aren't committed unless forced); the **whole history** scan shows what was actually
+committed.
 
 If gitleaks blocks a commit, remove the secret instead of skipping the check
 (never `git commit --no-verify`). If the secret was ever pushed, treat it as leaked
@@ -238,6 +239,7 @@ uv run pytest --cov
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
+| `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file through (`.env`, `.env.local`, `config/.env`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any `.env` file into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
@@ -245,6 +247,7 @@ uv run pytest --cov
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
+| `.gitignore`, `.dockerignore` | Files kept out of git and out of the image. Every file whose name starts with `.env` (including `.envrc`), in any folder, is kept out of both; git keeps only `.env.example`. To commit another such file, add a `!` line for it to `.gitignore` |
 | `.copier-answers.yml` | Lets `copier update` find the template; don't edit |
 
 ## Conventions

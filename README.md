@@ -30,3 +30,12 @@ copier update
 
 Copier re-applies the starter's changes and asks about any conflicts.
 Tag starter releases (`git tag v0.2.0`) so projects update to a known version.
+
+## Working on the starter
+
+- Files under `template/` ending in `.jinja` are filled in by Copier and lose the
+  `.jinja` ending in the new project. Other files are copied unchanged.
+- New projects' `.gitignore` is stored as `template/.gitignore.jinja`. Keep the
+  `.jinja` ending: git reads any file named `.gitignore`, even inside `template/`, and
+  its `.env*` rule would stop git tracking `template/.env.example.jinja`.
+  (`.dockerignore` doesn't need this, because git doesn't read it.)
