@@ -112,6 +112,21 @@ DATABASES["default"]["CONN_HEALTH_CHECKS"] = True
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
+# --- Cache ----------------------------------------------------------------------
+
+# Redis, set by CACHE_URL (e.g. redis://localhost:6379/0). Required outside tests; tests
+# use an in-memory cache, so they don't need Redis running.
+CACHE_TIMEOUT_SECONDS = 2  # a slow or missing Redis fails fast instead of hanging requests
+if IS_TEST:
+    CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+else:
+    CACHES = {"default": env.cache("CACHE_URL")}  # required
+    CACHES["default"]["OPTIONS"] = {
+        "socket_connect_timeout": CACHE_TIMEOUT_SECONDS,
+        "socket_timeout": CACHE_TIMEOUT_SECONDS,
+    }
+
+
 # --- Users and passwords --------------------------------------------------------
 
 AUTH_USER_MODEL = "accounts.User"

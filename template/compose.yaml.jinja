@@ -1,5 +1,5 @@
 # What every environment shares. Docker Compose combines it with another file:
-#   Development: `docker compose up -d db` also loads compose.override.yaml by itself.
+#   Development: `docker compose up -d` also loads compose.override.yaml by itself.
 #   Production:  `docker compose -f compose.yaml -f compose.prod.yaml ...` loads
 #                compose.prod.yaml instead (the dev override is left out).
 name: {{ project_slug }}
@@ -16,5 +16,26 @@ services:
       test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       start_period: 60s              # time to start, or to recover after a crash
       start_interval: 2s             # checked often while starting, so `up` is quick
+      interval: 10s
+      retries: 5
+
+  # Django's cache. Cache only: nothing is saved to disk, and when it's full the least
+  # recently used keys are dropped, so it never grows past its memory limit.
+  redis:
+    image: redis:8-trixie            # official Redis 8 on Debian trixie
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      start_period: 30s
+      start_interval: 2s
       interval: 10s
       retries: 5

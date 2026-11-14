@@ -5,6 +5,7 @@ gets only what has to exist on day one:
 
 - PostgreSQL 18 (the official image) in Docker; extensions such as pgvector are added
   per project when one needs them
+- Redis 8 as Django's cache (`CACHE_URL`), cache-only and internal in production
 - Docker Compose for development and production: a shared base, a development override,
   and a production file with secrets from env files and a separate migrate step
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID

@@ -19,6 +19,7 @@ PRODUCTION_ENV = {
     "DJANGO_ALLOWED_HOSTS": "example.com",
     "DJANGO_ADMIN_URL": "staff-portal/",
     "DATABASE_URL": "postgres://user:pass@localhost:5432/db",
+    "CACHE_URL": "redis://localhost:6379/0",
 }
 
 
@@ -65,6 +66,24 @@ def test_refuses_to_start_without_allowed_hosts():
     assert "DJANGO_ALLOWED_HOSTS" in result.stderr
 
 
+def test_refuses_to_start_without_a_cache():
+    result = run_manage("check", CACHE_URL=None)
+    assert result.returncode != 0
+    assert "CACHE_URL" in result.stderr
+
+
+def test_production_caches_in_redis_and_gives_up_quickly():
+    result = run_manage(
+        "shell",
+        "-c",
+        "from django.conf import settings; c = settings.CACHES['default']; "
+        "print(c['BACKEND'], c['LOCATION'], c['OPTIONS']['socket_timeout'])",
+    )
+    assert result.stdout.strip().splitlines()[-1] == (
+        "django.core.cache.backends.redis.RedisCache redis://localhost:6379/0 2"
+    ), result.stderr
+
+
 def test_refuses_default_admin_url():
     result = run_manage("check", DJANGO_ADMIN_URL="admin/")
     assert result.returncode != 0
@@ -83,7 +102,7 @@ def test_refuses_unknown_environment():
     assert "DJANGO_ENV" in result.stderr
 
 
-def test_development_starts_with_only_a_database_url():
+def test_development_starts_with_only_database_and_cache_urls():
     result = run_manage(
         "shell",
         "-c",
@@ -100,3 +119,9 @@ def test_development_starts_with_only_a_database_url():
 def test_pytest_runs_as_the_test_environment():
     assert settings.DJANGO_ENV == "test"
     assert settings.DEBUG is False
+
+
+def test_tests_cache_in_memory_without_redis():
+    assert settings.CACHES["default"]["BACKEND"] == (
+        "django.core.cache.backends.locmem.LocMemCache"
+    )

@@ -12,7 +12,7 @@ cp .env.example .env              # sets DJANGO_ENV=development
 uv sync                           # installs Python 3.14 and the packages, creates uv.lock
 uv run pre-commit install         # turns on the checks that run on every commit (see Checks)
 git add -A && git commit -m "Start from django-starter"   # the first commit (slow once: see Checks)
-docker compose up -d db           # starts Postgres in Docker
+docker compose up -d              # starts Postgres and Redis in Docker
 uv run python manage.py migrate
 uv run python manage.py createsuperuser
 uv run python manage.py runserver
@@ -27,7 +27,7 @@ the production image, installs exactly the same thing. Commit it whenever it cha
 
 | Command | What it does |
 | --- | --- |
-| `docker compose up -d db` / `docker compose stop` | Start / stop Postgres |
+| `docker compose up -d` / `docker compose stop` | Start / stop Postgres and Redis |
 | `uv run python manage.py runserver` | Development server with auto-reload |
 | `uv run python manage.py makemigrations` / `migrate` | Create / apply database changes |
 | `uv run pytest` | Run the tests |
@@ -52,7 +52,7 @@ own environment variable.
 | `production` | Nothing: it's what unset means (with Docker Compose, the values come from `.env.production`) | HTTPS-only with HSTS, debug forbidden, required values below |
 
 Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
-`DJANGO_ADMIN_URL` or `DATABASE_URL` is missing, if the admin URL is `admin/`,
+`DJANGO_ADMIN_URL`, `DATABASE_URL` or `CACHE_URL` is missing, if the admin URL is `admin/`,
 or if `DJANGO_DEBUG` is true. A misspelled `DJANGO_ENV` is refused everywhere.
 `.env.example` lists and explains every variable.
 
@@ -63,15 +63,16 @@ or if `DJANGO_DEBUG` is true. A misspelled `DJANGO_ENV` is refused everywhere.
 Start:
 
 ```bash
-docker compose up -d db               # start Postgres in the background
+docker compose up -d                  # start Postgres and Redis in the background
 uv run python manage.py runserver     # start Django at http://localhost:8000/admin/
 ```
 
 `docker compose` loads `compose.yaml` plus `compose.override.yaml` (the development
-settings: the dev login `app`/`app`, and port 5432 open to this machine only).
+settings: the dev login `app`/`app`, and Postgres on port 5432 and Redis on port 6379,
+both open to this machine only). Redis is Django's cache; it saves nothing to disk.
 
 **Port 5432 already in use** (for example by a Postgres installed on your machine):
-`docker compose up -d db` fails with an error about port 5432 ("address already in
+`docker compose up -d` fails with an error about port 5432 ("address already in
 use" or "port is already allocated"). Pick another port: in `.env`, add the first line
 and change your `DATABASE_URL` line to the second, then start it again:
 
@@ -80,11 +81,13 @@ POSTGRES_PORT=5433
 DATABASE_URL=postgres://app:app@localhost:5433/{{ project_slug }}
 ```
 
+Port 6379 works the same way for Redis: set `REDIS_PORT` and change `CACHE_URL`.
+
 Stop:
 
 ```bash
 # Ctrl+C in the runserver terminal stops Django, then:
-docker compose stop                   # stop Postgres (your data is kept)
+docker compose stop                   # stop Postgres and Redis (your data is kept)
 ```
 
 Check it: <http://localhost:8000/nope> should show Django's yellow debug page, and
@@ -99,7 +102,7 @@ uv run python manage.py shell -c "from django.conf import settings as s; print(s
 Start:
 
 ```bash
-docker compose up -d db               # the tests need Postgres running
+docker compose up -d db               # the tests need Postgres (they cache in memory)
 uv run pytest                         # sets DJANGO_ENV=test itself
 ```
 
@@ -114,7 +117,7 @@ docker compose stop                   # stop Postgres
 
 ### Production (the real image, run locally)
 
-`compose.prod.yaml` runs production: Postgres, then a `migrate` step that applies
+`compose.prod.yaml` runs production: Postgres and Redis, then a `migrate` step that applies
 migrations and exits, then the app (it only starts if `migrate` succeeded). It's a
 separate Compose project (`{{ project_slug }}-production`) with its own database, so it
 never touches your development data.
@@ -127,7 +130,7 @@ Secrets come from two files next to it, which git and the image both ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
-| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL` and `DATABASE_URL`. Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
+| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://redis:6379/0`). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
 | `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
 
 **To try it on your machine,** make both files once. This makes a random database
@@ -148,6 +151,7 @@ DJANGO_SECRET_KEY=$SECRET_KEY
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 DJANGO_ADMIN_URL=staff/
 DATABASE_URL=postgres://app:$PASSWORD@db:5432/{{ project_slug }}
+CACHE_URL=redis://redis:6379/0
 EOF
 )
 ```
@@ -322,9 +326,9 @@ uv run pytest --cov
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
-| `compose.yaml` | What every environment shares: Postgres 18 and its health check |
-| `compose.override.yaml` | Development, loaded automatically: the dev login and Postgres port |
-| `compose.prod.yaml` | Production: Postgres, the `migrate` step and the app, with secrets from `.env.production` and `.env.postgres` |
+| `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
+| `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
+| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step and the app, with secrets from `.env.production` and `.env.postgres` |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
