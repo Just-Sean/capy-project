@@ -7,12 +7,28 @@ environment (no .env file, no DJANGO_ENV, so production), exactly as a server wo
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
 from django.conf import settings
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+# pytest's own warning filters (pyproject.toml) also apply in every manage.py process,
+# so a deprecated Django feature fails there too. Each is "error::<warning class>".
+PYPROJECT = tomllib.loads((PROJECT_DIR / "pyproject.toml").read_text())
+WARNING_FILTERS = PYPROJECT["tool"]["pytest"]["ini_options"]["filterwarnings"]
+ERROR_CLASSES = [rule.removeprefix("error::") for rule in WARNING_FILTERS]
+# Python's own -W option can't name Django's warning classes (it reads them before
+# Django can be imported), so this starts manage.py after setting the filters itself.
+MANAGE_WITH_WARNINGS_AS_ERRORS = (
+    "import runpy, sys, warnings\n"
+    "from django.utils.module_loading import import_string\n"
+    "for path in sys.argv.pop(1).split(','):\n"
+    "    warnings.filterwarnings('error', category=import_string(path))\n"
+    "sys.argv[0] = 'manage.py'\n"
+    "runpy.run_path('manage.py', run_name='__main__')\n"
+)
 
 PRODUCTION_ENV = {
     "DJANGO_READ_DOT_ENV": "false",
@@ -35,8 +51,9 @@ def run_manage(*args, **env_changes):
     coverage = {k: v for k, v in os.environ.items() if k.startswith("COVERAGE_")}
     env = {"PATH": os.environ["PATH"], **coverage, **PRODUCTION_ENV, **env_changes}
     env = {key: value for key, value in env.items() if value is not None}
+    error_classes = ",".join(ERROR_CLASSES)
     return subprocess.run(
-        [sys.executable, "manage.py", *args],
+        [sys.executable, "-c", MANAGE_WITH_WARNINGS_AS_ERRORS, error_classes, *args],
         cwd=PROJECT_DIR,
         env=env,
         capture_output=True,

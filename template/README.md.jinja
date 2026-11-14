@@ -455,6 +455,10 @@ uv run pytest --cov
   `uv run pytest --cov --cov-report=term-missing --cov-report=html` (it writes
   `htmlcov/`; naming `--cov-report` replaces the default list, so ask for both).
   `tests/test_migrations.py` also fails if a model changed without a migration.
+  Any use of a Django feature that's being removed (in the next version or the one
+  after) fails the tests too, in the tests' own code and in the `manage.py` processes
+  some tests start, so an upgrade never brings surprises. Fix the code as the
+  warning's message says; the rule is `filterwarnings` in `pyproject.toml`.
 - **pip-audit** checks every package in `uv.lock` (exact versions and hashes,
   including the dev tools) against the public vulnerability databases. It prints
   "No known vulnerabilities found", or each problem with the version that fixes it;
@@ -475,6 +479,7 @@ uv run pytest --cov
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
+| `tests/test_deprecation_warnings.py` | Proves every Django deprecation warning fails the tests, both in pytest itself and in the `manage.py` processes tests start |
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
