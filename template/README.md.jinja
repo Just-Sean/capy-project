@@ -427,6 +427,7 @@ uv run pytest --cov
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
+| `tests/test_settings_package.py` | Proves every topic file's settings reach Django and no two topic files set the same name |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
