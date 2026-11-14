@@ -57,7 +57,9 @@ def test_wrong_passwords_lock_the_user_out_even_with_the_right_one(client, staff
 
 @pytest.mark.django_db
 def test_a_lockout_doesnt_block_other_users_or_other_addresses(client, staff, django_user_model):
-    django_user_model.objects.create_user(username="other", email="o@example.com", password=PASSWORD)
+    django_user_model.objects.create_user(
+        username="other", email="other@example.com", password=PASSWORD, is_staff=True
+    )
     fail(client, LIMIT)
     assert log_in(client, PASSWORD, username="other").status_code == LOGGED_IN
     client.logout()

@@ -177,7 +177,9 @@ AXES_LOCKOUT_PARAMETERS = [["username", "ip_address"]]  # the pair, not either a
 AXES_RESET_ON_SUCCESS = True
 AXES_ENABLE_RETRY_AFTER_HEADER = True  # tells clients when they may try again
 AXES_CLIENT_IP_CALLABLE = "config.client_ip.client_ip"  # trusts the proxy only if declared
-AXES_VERBOSE = False  # its log lines name the user and IP; attempts are kept in the admin
+# Fewer log lines. Failures and lockouts are still logged, with the username and IP
+# address hidden (AXES_SENSITIVE_PARAMETERS); the full records are in the admin.
+AXES_VERBOSE = False
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},

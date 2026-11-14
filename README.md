@@ -11,8 +11,8 @@ gets only what has to exist on day one:
   and a production file with secrets from env files and a separate migrate step
 - A custom `User` model (`accounts.User`) with a unique, lowercase email and a public UUID
 - One settings file driven by environment variables (django-environ), secure by default:
-  Argon2 passwords, a strict Content Security Policy with nonces, HSTS in production and
-  the standard security headers
+  Argon2 passwords, login rate limiting (django-axes), a strict Content Security Policy
+  with nonces, HSTS in production and the standard security headers
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
 - pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
 - pre-commit (gitleaks and Ruff on every commit) and pip-audit
@@ -46,6 +46,10 @@ hand. Changes so far that need this:
   development with `docker compose up -d` (it now starts Redis too). For production,
   make `.env.redis` and add `CACHE_URL` to `.env.production`, as the project README's
   Production section shows.
+- **Login rate limiting:** run `migrate` after updating (django-axes adds its tables;
+  production's `migrate` step does this by itself). Behind a reverse proxy, make sure
+  `DJANGO_BEHIND_PROXY=true` is set, or every visitor shares the proxy's address and
+  one person's failed logins can lock out others using the same username.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.

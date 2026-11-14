@@ -266,6 +266,23 @@ These are set in `config/settings.py` and apply to every environment unless note
   with an older hasher still work, and are re-hashed with Argon2 the next time that user
   logs in. Each login check uses about 100 MB of memory for a moment, which matters
   when choosing `WEB_CONCURRENCY` on a small server.
+- **Login rate limiting** ([django-axes](https://django-axes.readthedocs.io/)): after 5
+  failed logins for the same username from the same IP address, that pair is locked out
+  for 15 minutes (each further try during the lockout starts it again), and gets a
+  "too many attempts" page with a `Retry-After` header. Other users and addresses aren't
+  affected, and a successful login clears the count. It works through Django's own
+  login, so the admin and any later login page are covered. Change the limits with
+  `DJANGO_LOGIN_FAILURE_LIMIT` and `DJANGO_LOGIN_LOCKOUT_MINUTES`. Attempts and lockouts
+  are listed in the admin (Axes), and failures are logged with the username and address
+  hidden. Behind a reverse proxy, set `DJANGO_BEHIND_PROXY=true` so the visitor's real
+  address is used (`config/client_ip.py`); without it every visitor shares the proxy's.
+  To unlock early, including yourself in development:
+
+  ```bash
+  uv run python manage.py axes_reset                                  # everyone
+  uv run python manage.py axes_reset_username <username>              # one user
+  docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py axes_reset   # in production
+  ```
 - **Security headers** on every response except `/healthz`: `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and
   `Cross-Origin-Opener-Policy: same-origin`. Production adds the HTTPS redirect,
@@ -379,6 +396,7 @@ uv run pytest --cov
 | `config/settings.py` | All settings, read from the environment |
 | `config/urls.py` | The root URL map; each app adds its URLs here |
 | `config/middleware.py` | Answers `/healthz` before anything else runs |
+| `config/client_ip.py` | The visitor's IP address for login rate limiting, trusting a proxy's header only when `DJANGO_BEHIND_PROXY` is on |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
@@ -388,6 +406,7 @@ uv run pytest --cov
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
+| `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), others aren't affected, the lockout ends after the cool-off, a successful login clears the count, and a faked `X-Forwarded-For` can't get around it |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
