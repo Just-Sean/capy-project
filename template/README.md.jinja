@@ -283,8 +283,8 @@ These are set in `config/settings.py` and apply to every environment unless note
   - A view that needs something from another site (a map, a video) can set its own
     policy with `csp_override` from `django.views.decorators.csp`. It **replaces** the
     whole policy for that view, so build on the site's one rather than starting empty:
-    `@csp_override({{ '{{' }}**settings.SECURE_CSP, "frame-src": ["https://www.youtube-nocookie.com"]{{ '}}' }})`.
-    Never pass `{{ '{{' }}{{ '}}' }}`: that removes the policy for the view.
+    `@csp_override({**settings.SECURE_CSP, "frame-src": ["https://www.youtube-nocookie.com"]})`.
+    Never pass `{}`: that removes the policy for the view.
   - In **development** the policy only reports (Django's yellow debug pages use inline
     styles): the browser's console shows what it would block. Tests and production
     enforce it, so check the console before you commit.
