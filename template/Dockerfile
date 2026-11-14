@@ -1,5 +1,5 @@
-# Production image. Build and run it locally with:
-#   docker compose --profile prod up --build
+# Production image. Build and run it, with its migrate step and Postgres, using:
+#   docker compose -f compose.yaml -f compose.prod.yaml up --build
 # Development doesn't use this: Django runs on your machine, only Postgres runs in Docker.
 
 # ---- Stage 1: install dependencies with uv -----------------------------------
@@ -46,5 +46,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s \
 
 # Gunicorn's settings (workers, timeouts, logs) are in gunicorn.conf.py. Inside the
 # container it listens on all interfaces, so Docker can forward port 8000 to it.
-# compose.yaml's web service runs its own command with the same --bind: change both.
 CMD ["gunicorn", "config.wsgi", "--bind", "0.0.0.0:8000"]

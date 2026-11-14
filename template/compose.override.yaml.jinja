@@ -1,0 +1,15 @@
+# Development only. `docker compose` loads this file automatically on top of
+# compose.yaml; production leaves it out (see compose.prod.yaml).
+services:
+  db:
+    environment:
+      POSTGRES_USER: app               # dev-only credentials (DATABASE_URL in .env matches)
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: {{ project_slug }}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"   # reachable from this machine only
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+volumes:
+  pgdata:
