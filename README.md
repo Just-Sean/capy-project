@@ -20,6 +20,8 @@ gets only what has to exist on day one:
   production and only over an encrypted connection there
 - Background jobs with Django's Tasks API: run straight away in development and tests,
   stored in the database and run by a worker service in production (django-tasks-db)
+- Minimal, accessible error pages (400, 403, 404, 500) and a `base.html`, plus a static
+  page for the proxy to show when Django is down
 - Health checks: `/healthz` (the app runs) for Docker, `/readyz` (the database and Redis
   answer) for load balancers, and one for the job worker
 - Logs as one JSON object per line in production (Gunicorn's too, without query strings),
@@ -72,6 +74,12 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
+- **Error pages:** a root `templates/` folder is new (`TEMPLATES["DIRS"]` now includes
+  it), with `base.html`, the error pages and `proxy_error.html`. If your project already
+  has its own `templates/` folder or error pages, `copier update` shows a conflict for
+  each file with the same name: keep yours or the starter's. Pages your project already
+  had in an app's `templates/` folder stay as they are, but a root one with the same name
+  now takes priority.
 - **Readiness check:** `/readyz` is new (the database and Redis answer); optionally point
   a load balancer in front of several app servers at it. The `worker` now has a Docker
   health check, so `up --wait` takes about a minute longer, and database connections

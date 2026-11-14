@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% comment %}
+  Django renders this one without the request or any data, because what failed might be
+  the database. Keep it that way: no tags that need the request, the user or a query.
+{% endcomment %}
+{% block title %}Something went wrong{% endblock %}
+{% block content %}
+  <h1>Something went wrong</h1>
+  <p>The site had a problem showing this page. It's been logged, so it can be fixed.
+    Please try again in a few minutes.</p>
+  <p><a href="/">Go to the home page</a></p>
+{% endblock %}

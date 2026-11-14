@@ -463,6 +463,29 @@ and `cd` into the project folder first:
 0 3 * * * cd /path/to/project && docker compose -f compose.yaml -f compose.prod.yaml run --rm -T worker python manage.py prune_db_task_results
 ```
 
+### Error pages
+
+With debug off (tests and production), errors show the site's own pages from
+`templates/`, never Django's bare ones or any internal details:
+
+| Page | When |
+| --- | --- |
+| `400.html` | A request the site can't use, e.g. an unknown host name |
+| `403.html` | Access denied (`PermissionDenied`) |
+| `403_csrf.html` | A form failed its security check (the page was open too long, cookies are blocked, or it came from another site) |
+| `404.html` | No page at that address |
+| `500.html` | The site crashed. The error is logged with its stack trace (see [Logs](#logs)) |
+
+They extend `templates/base.html`, which a project's own pages can extend too: it's
+plain HTML with the browser's own styles, in light or dark to match the visitor. Keep
+`500.html` free of anything that needs the request, the user or the database: Django
+shows it when those may be what failed. In development (debug on) Django shows its
+detailed debug pages instead; to see these, set `DJANGO_DEBUG=false` in `.env`.
+
+`templates/proxy_error.html` is for the reverse proxy, not Django: a complete page,
+loading nothing, for the proxy to show when Django doesn't answer (during a restart, or
+when it's down).
+
 ### Logs
 
 Everything is written to the console, where `runserver`, Docker, systemd or the hosting
@@ -711,7 +734,9 @@ uv run pytest --cov
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
+| `templates/` | Project-wide templates: `base.html`, the error pages (`400`, `403`, `403_csrf`, `404`, `500`) and `proxy_error.html` for the reverse proxy |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
+| `tests/test_error_pages.py` | Proves each error (400, 403, failed form check, 404, 500) shows the site's page without internal details, the 500 page works with the database and Redis down, no page has code the CSP would block, and the proxy's page loads nothing |
 | `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database refuses or never answers (while `/healthz` still answers), the database check uses its own connection, failures are logged without connection details, and the worker's check fails when the database is down or jobs wait with none started, but not for a busy worker, finished jobs, other queues or Redis being down |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |

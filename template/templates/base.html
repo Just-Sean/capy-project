@@ -1,0 +1,21 @@
+<!doctype html>
+{% comment %}
+  The base for the site's own pages. Minimal on purpose: the browser's own styles, in
+  light or dark to match the visitor, and nothing inline (the Content Security Policy
+  blocks inline code without a nonce). A design system restyles it per project.
+  It uses nothing from the request or the database, so the 500 page can extend it even
+  when those are what failed.
+{% endcomment %}
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}{% endblock %}</title>
+</head>
+<body>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
