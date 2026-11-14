@@ -1,9 +1,10 @@
 # Production: Postgres, Redis, the migrate step and the app. Run it with
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
-# Secrets come from two files next to this one, never from this file or the image
+# Secrets come from three files next to this one, never from this file or the image
 # (git and .dockerignore both ignore them; see the README for what goes in each):
 #   .env.production  Django's settings, including DATABASE_URL and CACHE_URL
 #   .env.postgres    the database login: user, password and database name
+#   .env.redis       the Redis password (REDIS_PASSWORD)
 
 # Its own project name, so production's containers and database volume are separate
 # from development's even on the same machine.
@@ -33,13 +34,15 @@ services:
       - pgdata:/var/lib/postgresql
     restart: unless-stopped
 
-  # The cache, locked down like the app: it runs as its own unprivileged user, saves
-  # nothing to disk, and only the internal network reaches it.
+  # The cache, locked down like the app: it runs as its own unprivileged user with a
+  # login, saves nothing to disk, and only the internal network reaches it. /data is in
+  # memory: it only holds the login file Redis writes at start.
   redis:
-    user: redis
+    env_file: .env.redis
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true
+    tmpfs: [/data]
     networks: [backend]
     restart: unless-stopped
 

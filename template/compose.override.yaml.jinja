@@ -12,6 +12,8 @@ services:
       - pgdata:/var/lib/postgresql
 
   redis:
+    environment:
+      REDIS_PASSWORD: app              # dev-only password (CACHE_URL in .env matches)
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"      # reachable from this machine only (CACHE_URL in .env matches)
 

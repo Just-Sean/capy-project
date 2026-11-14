@@ -4,7 +4,8 @@ One file, secure by default. DJANGO_ENV picks the environment:
   - development: set in your .env. Debug on, plain HTTP allowed, and safe local
                  defaults for the secret key, allowed hosts and admin URL.
   - test:        set automatically by pytest (pytest-env). Debug off, fast password
-                 hashing, plain static files storage. Django adds a throwaway test database.
+                 hashing, plain static files storage, and an in-memory cache, so Redis
+                 isn't needed. Django adds a throwaway test database.
   - production:  the default when DJANGO_ENV is unset. Real environment variables on the
                  server; no .env file exists. HTTPS-only, and debug can't be turned on.
 
@@ -114,17 +115,22 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # --- Cache ----------------------------------------------------------------------
 
-# Redis, set by CACHE_URL (e.g. redis://localhost:6379/0). Required outside tests; tests
-# use an in-memory cache, so they don't need Redis running.
-CACHE_TIMEOUT_SECONDS = 2  # a slow or missing Redis fails fast instead of hanging requests
+# Redis, set by CACHE_URL (e.g. redis://app:password@localhost:6379/0). Required outside
+# tests; tests use an in-memory cache, so they don't need Redis running. Django's own
+# Redis backend is named explicitly, so another installed package can't swap it.
+# Connection and read timeout (not how long keys are kept): a slow or missing Redis
+# fails fast instead of holding a request.
+REDIS_SOCKET_TIMEOUT_SECONDS = 2
 if IS_TEST:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
 else:
     CACHES = {"default": env.cache("CACHE_URL")}  # required
-    CACHES["default"]["OPTIONS"] = {
-        "socket_connect_timeout": CACHE_TIMEOUT_SECONDS,
-        "socket_timeout": CACHE_TIMEOUT_SECONDS,
-    }
+    CACHES["default"]["BACKEND"] = "django.core.cache.backends.redis.RedisCache"
+    # Added to any options given in CACHE_URL itself, e.g. TLS settings for rediss://.
+    CACHES["default"].setdefault("OPTIONS", {}).update(
+        socket_connect_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
 
 
 # --- Users and passwords --------------------------------------------------------

@@ -39,7 +39,7 @@ def project(tmp_path):
     """A copy of the compose files, with empty secret files (production needs them)."""
     for name in COMPOSE_FILES:
         shutil.copy(PROJECT_DIR / name, tmp_path / name)
-    for name in [".env.production", ".env.postgres"]:
+    for name in [".env.production", ".env.postgres", ".env.redis"]:
         (tmp_path / name).write_text("")
     return tmp_path
 
@@ -78,12 +78,32 @@ def test_development_runs_postgres_and_redis_reachable_from_this_machine(project
     assert host_ips(services["db"]) == host_ips(services["redis"]) == {"127.0.0.1"}
 
 
+def redis_start_script(project):
+    """The shell script the Redis service starts with (sh -c '...')."""
+    command = config(project, as_written=True)["services"]["redis"]["command"]
+    assert command[:2] == ["sh", "-c"]
+    return " ".join(command[2].split())  # one line, single spaces
+
+
 def test_redis_is_a_cache_that_saves_nothing_and_stays_within_its_memory(project):
-    command = config(project)["services"]["redis"]["command"]
-    assert command[command.index("--save") + 1] == ""
-    assert command[command.index("--appendonly") + 1] == "no"
-    assert command[command.index("--maxmemory-policy") + 1] == "allkeys-lru"
-    assert "--maxmemory" in command
+    script = redis_start_script(project)
+    for option in ['--save ""', "--appendonly no", "--maxmemory 256mb", "allkeys-lru"]:
+        assert option in script
+
+
+def test_redis_needs_a_login_and_keeps_the_password_out_of_its_arguments(project):
+    script = redis_start_script(project)
+    assert "user default off" in script  # no login-free access
+    assert "-@dangerous" in script  # the app's login can't run admin commands
+    assert "--aclfile" in script
+    # The password goes into the users file, never onto redis-server's command line.
+    assert "PASSWORD" not in script.split("exec redis-server", 1)[1]
+    assert config(project)["services"]["redis"]["user"] == "redis"  # never root
+
+
+def test_the_redis_health_check_uses_the_ping_only_login(project):
+    test = config(project)["services"]["redis"]["healthcheck"]["test"]
+    assert test[test.index("--user") + 1] == "healthcheck"
 
 
 def test_the_database_is_ready_only_once_it_answers_over_tcp(project):
@@ -108,6 +128,7 @@ def test_production_secrets_come_only_from_env_files(project):
     # Written in a compose file, a secret would be committed to git.
     services = config(project, *PRODUCTION, as_written=True)["services"]
     assert env_files(services["db"]) == [".env.postgres"]
+    assert env_files(services["redis"]) == [".env.redis"]
     for name in APP_SERVICES:
         assert env_files(services[name]) == [".env.production"]
     assert [name for name, service in services.items() if "environment" in service] == []
@@ -154,6 +175,8 @@ def test_the_app_and_redis_run_locked_down(project):
         assert services[name]["read_only"] is True
         assert "no-new-privileges:true" in services[name]["security_opt"]
     assert services["redis"]["user"] == "redis"  # never root
+    # Its read-only filesystem leaves only /data, in memory, for the login file.
+    assert [mount["target"] for mount in services["redis"]["tmpfs"]] == ["/data"]
     assert "no-new-privileges:true" in services["db"]["security_opt"]
 
 

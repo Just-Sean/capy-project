@@ -20,21 +20,33 @@ services:
       retries: 5
 
   # Django's cache. Cache only: nothing is saved to disk, and when it's full the least
-  # recently used keys are dropped, so it never grows past its memory limit.
+  # recently used keys are dropped, so it never grows past its memory limit (raise
+  # --maxmemory here if a project needs more).
+  #
+  # It needs a login, because Django unpickles what it reads back: anything that could
+  # write to an open Redis could run code in the app. Users, from REDIS_PASSWORD:
+  #   app          Django's login (CACHE_URL), without Redis's admin commands
+  #   healthcheck  no password, and allowed only PING
+  #   default      the no-login user, switched off
+  # The password goes into a file Redis reads at start, so it never shows in the
+  # process list.
   redis:
     image: redis:8-trixie            # official Redis 8 on Debian trixie
+    user: redis                      # never root, so the image skips its root setup
     command:
-      - redis-server
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-      - --maxmemory
-      - 256mb
-      - --maxmemory-policy
-      - allkeys-lru
+      - sh
+      - -c
+      - |
+        : "$${REDIS_PASSWORD:?REDIS_PASSWORD must be set}"
+        umask 077
+        printf '%s\n' \
+          'user default off' \
+          "user app on >$${REDIS_PASSWORD} ~* &* +@all -@dangerous +flushdb" \
+          'user healthcheck on nopass -@all +ping' > /data/users.acl
+        exec redis-server --aclfile /data/users.acl --save "" --appendonly no \
+          --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "--user", "healthcheck", "--pass", "x", "ping"]
       start_period: 30s
       start_interval: 2s
       interval: 10s

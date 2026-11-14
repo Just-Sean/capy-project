@@ -19,7 +19,7 @@ PRODUCTION_ENV = {
     "DJANGO_ALLOWED_HOSTS": "example.com",
     "DJANGO_ADMIN_URL": "staff-portal/",
     "DATABASE_URL": "postgres://user:pass@localhost:5432/db",
-    "CACHE_URL": "redis://localhost:6379/0",
+    "CACHE_URL": "redis://app:cache-password@localhost:6379/0",
 }
 
 
@@ -72,16 +72,30 @@ def test_refuses_to_start_without_a_cache():
     assert "CACHE_URL" in result.stderr
 
 
+PRINT_CACHE = (
+    "from django.conf import settings; c = settings.CACHES['default']; o = c['OPTIONS']; "
+    "print(c['BACKEND'], o['socket_connect_timeout'], o['socket_timeout'], "
+    "'health_check_interval' in o)"
+)
+
+
 def test_production_caches_in_redis_and_gives_up_quickly():
-    result = run_manage(
-        "shell",
-        "-c",
-        "from django.conf import settings; c = settings.CACHES['default']; "
-        "print(c['BACKEND'], c['LOCATION'], c['OPTIONS']['socket_timeout'])",
-    )
+    result = run_manage("shell", "-c", PRINT_CACHE)
     assert result.stdout.strip().splitlines()[-1] == (
-        "django.core.cache.backends.redis.RedisCache redis://localhost:6379/0 2"
+        "django.core.cache.backends.redis.RedisCache 2 2 False"
     ), result.stderr
+
+
+def test_options_in_the_cache_url_are_kept():
+    url = "redis://app:cache-password@localhost:6379/0?health_check_interval=30"
+    result = run_manage("shell", "-c", PRINT_CACHE, CACHE_URL=url)
+    assert result.stdout.strip().splitlines()[-1].endswith("2 2 True"), result.stderr
+
+
+def test_development_also_refuses_to_start_without_a_cache():
+    result = run_manage("check", DJANGO_ENV="development", CACHE_URL=None)
+    assert result.returncode != 0
+    assert "CACHE_URL" in result.stderr
 
 
 def test_refuses_default_admin_url():

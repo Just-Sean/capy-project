@@ -1,6 +1,7 @@
 # {{ project_name }}
 
-A Django 6.1 project on PostgreSQL 18, made from the django-starter template.
+A Django 6.1 project on PostgreSQL 18, with Redis 8 as its cache, made from the
+django-starter template.
 
 ## First-time setup
 
@@ -48,12 +49,13 @@ own environment variable.
 | `DJANGO_ENV` | Set by | Defaults |
 | --- | --- | --- |
 | `development` | `.env` on your machine | Debug on, plain HTTP, local secret key, `admin/` |
-| `test` | pytest, automatically (pytest-env) | Debug off, plain HTTP, fast password hashing |
+| `test` | pytest, automatically (pytest-env) | Debug off, plain HTTP, fast password hashing, in-memory cache (no Redis needed) |
 | `production` | Nothing: it's what unset means (with Docker Compose, the values come from `.env.production`) | HTTPS-only with HSTS, debug forbidden, required values below |
 
 Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
 `DJANGO_ADMIN_URL`, `DATABASE_URL` or `CACHE_URL` is missing, if the admin URL is `admin/`,
 or if `DJANGO_DEBUG` is true. A misspelled `DJANGO_ENV` is refused everywhere.
+`DATABASE_URL` and `CACHE_URL` are needed in development too; `.env.example` sets both.
 `.env.example` lists and explains every variable.
 
 ## Running each environment
@@ -68,8 +70,16 @@ uv run python manage.py runserver     # start Django at http://localhost:8000/ad
 ```
 
 `docker compose` loads `compose.yaml` plus `compose.override.yaml` (the development
-settings: the dev login `app`/`app`, and Postgres on port 5432 and Redis on port 6379,
-both open to this machine only). Redis is Django's cache; it saves nothing to disk.
+settings: the dev login `app`/`app` for both, and Postgres on port 5432 and Redis on
+port 6379, both open to this machine only).
+
+**Redis** is Django's cache, shared by every server process. It saves nothing to disk
+and holds at most 256 MB (change `--maxmemory` in `compose.yaml`); when full it
+drops the keys used least recently. So treat anything in it as something that can
+disappear: stopping or restarting Redis empties it. A request gives up on Redis after
+2 seconds instead of hanging, and Django's Redis cache raises an error rather than
+skipping it, so code that must keep working while Redis is down should catch cache
+errors where it uses the cache.
 
 **Port 5432 already in use** (for example by a Postgres installed on your machine):
 `docker compose up -d` fails with an error about port 5432 ("address already in
@@ -81,13 +91,20 @@ POSTGRES_PORT=5433
 DATABASE_URL=postgres://app:app@localhost:5433/{{ project_slug }}
 ```
 
-Port 6379 works the same way for Redis: set `REDIS_PORT` and change `CACHE_URL`.
+**Port 6379 already in use** (for example by a Redis installed on your machine): the
+same error appears about port 6379. In `.env`, add the first line and change your
+`CACHE_URL` line to the second:
+
+```dotenv
+REDIS_PORT=6380
+CACHE_URL=redis://app:app@localhost:6380/0
+```
 
 Stop:
 
 ```bash
 # Ctrl+C in the runserver terminal stops Django, then:
-docker compose stop                   # stop Postgres and Redis (your data is kept)
+docker compose stop                   # stop both (the database is kept; the cache is emptied)
 ```
 
 Check it: <http://localhost:8000/nope> should show Django's yellow debug page, and
@@ -102,7 +119,7 @@ uv run python manage.py shell -c "from django.conf import settings as s; print(s
 Start:
 
 ```bash
-docker compose up -d db               # the tests need Postgres (they cache in memory)
+docker compose up -d db               # the tests need only Postgres: they cache in memory, not Redis
 uv run pytest                         # sets DJANGO_ENV=test itself
 ```
 
@@ -123,24 +140,28 @@ separate Compose project (`{{ project_slug }}-production`) with its own database
 never touches your development data.
 
 The app runs locked down: no Linux capabilities, a read-only filesystem (uploads go to
-the `media` volume), and the database only on an internal network with no published
-port. The app is published on this machine only (127.0.0.1:8000), for a reverse proxy.
+the `media` volume). Redis runs the same way, as its own non-root user with a login.
+The database and Redis are only on an internal network with no published port. The
+app is published on this machine only (127.0.0.1:8000), for a reverse proxy.
 
-Secrets come from two files next to it, which git and the image both ignore:
+Secrets come from three files next to it, which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
-| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://redis:6379/0`). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
+| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
 | `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
+| `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 
-**To try it on your machine,** make both files once. This makes a random database
-password and secret key; the files are created readable only by you:
+**To try it on your machine,** make the files once. This makes random passwords and
+a random secret key; the files are created readable only by you:
 
 ```bash
 (
   umask 077                                    # new files: only you can read them
   PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
+  REDIS_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  echo "REDIS_PASSWORD=$REDIS_PASSWORD" > .env.redis
   cat > .env.postgres <<EOF
 POSTGRES_USER=app
 POSTGRES_PASSWORD=$PASSWORD
@@ -151,7 +172,7 @@ DJANGO_SECRET_KEY=$SECRET_KEY
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 DJANGO_ADMIN_URL=staff/
 DATABASE_URL=postgres://app:$PASSWORD@db:5432/{{ project_slug }}
-CACHE_URL=redis://redis:6379/0
+CACHE_URL=redis://app:$REDIS_PASSWORD@redis:6379/0
 EOF
 )
 ```
@@ -189,7 +210,7 @@ Stop:
 docker compose -f compose.yaml -f compose.prod.yaml down      # remove the containers (data is kept)
 ```
 
-**On a real server** the same two files hold the real values: the site's domain in
+**On a real server** the same three files hold the real values: the site's domain in
 `DJANGO_ALLOWED_HOSTS`, and `DJANGO_BEHIND_PROXY=true` when a reverse proxy (Caddy,
 nginx) handles HTTPS, or the HTTPS redirect loops forever. Start it without
 `compose.local-http.yaml`, so the HTTPS protections stay on:
@@ -322,13 +343,13 @@ uv run pytest --cov
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
-| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database internal and gives Gunicorn time to stop |
+| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
-| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step and the app, with secrets from `.env.production` and `.env.postgres` |
+| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step and the app, with secrets from `.env.production`, `.env.postgres` and `.env.redis` |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
