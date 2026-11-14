@@ -96,7 +96,7 @@ services:
       - media:/app/media               # the same uploaded files the app sees
     restart: unless-stopped
     # On stop, the worker finishes the job in progress, then exits. A job still running
-    # after this is killed and stays marked as running, so keep jobs shorter.
+    # after this is killed and stays marked as running, so keep each job well under 60s.
     stop_grace_period: 60s
 
 networks:

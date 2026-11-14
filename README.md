@@ -53,7 +53,7 @@ hand. Changes so far that need this:
   development with `docker compose up -d` (it now starts Redis too). For production,
   make `.env.redis` and add `CACHE_URL` to `.env.production`, as the project README's
   Production section shows.
-- **New packages (Redis cache, login rate limiting, S3 uploads):** run `uv sync`, which installs
+- **New packages (Redis cache, login rate limiting, S3 uploads, background jobs):** run `uv sync`, which installs
   them and updates `uv.lock`, and commit `uv.lock`: the production image installs
   exactly what it lists.
 - **Login rate limiting:** run `uv run python manage.py migrate` (django-axes adds its
@@ -68,10 +68,14 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
-- **Background jobs:** run `uv sync` and `uv run python manage.py migrate` (django-tasks-db
-  adds its tables; production's `migrate` step does this by itself). Production now
-  starts a `worker` service too. If your project already set `TASKS`, keep your change
-  in `config/settings/tasks.py`.
+- **Background jobs:** run `uv sync` (commit the updated `uv.lock`) and
+  `uv run python manage.py migrate` (django-tasks-db adds its tables; production's
+  `migrate` step does this by itself). In production, enqueued jobs no longer run inside
+  the request: they wait in the database for the new `worker` service, which
+  `compose.prod.yaml` now starts. If you run production another way (e.g. systemd),
+  also run `python manage.py db_worker` as its own always-running service. Schedule the
+  daily clean-up of old jobs (see the project README's Background jobs section). If
+  your project already set `TASKS`, keep your change in `config/settings/tasks.py`.
 - **Email:** nothing to add for development (emails are printed). Email settings now
   come from `EMAIL_URL` through Django's `MAILERS` setting; if your project set
   `EMAIL_BACKEND`, `EMAIL_HOST` or other `EMAIL_*` settings, remove them and set
