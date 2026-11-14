@@ -14,6 +14,8 @@ gets only what has to exist on day one:
   `config/settings/`, secure by default:
   Argon2 passwords, login rate limiting (django-axes), a strict Content Security Policy
   with nonces, HSTS in production and the standard security headers
+- Uploaded files on local disk by default, or in S3 (or any S3-compatible service) with
+  private files, expiring signed links and no overwriting (django-storages)
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
 - pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
 - pre-commit (gitleaks and Ruff on every commit) and pip-audit
@@ -47,7 +49,7 @@ hand. Changes so far that need this:
   development with `docker compose up -d` (it now starts Redis too). For production,
   make `.env.redis` and add `CACHE_URL` to `.env.production`, as the project README's
   Production section shows.
-- **New packages (Redis cache, login rate limiting):** run `uv sync`, which installs
+- **New packages (Redis cache, login rate limiting, S3 uploads):** run `uv sync`, which installs
   them and updates `uv.lock`, and commit `uv.lock`: the production image installs
   exactly what it lists.
 - **Login rate limiting:** run `uv run python manage.py migrate` (django-axes adds its
@@ -56,6 +58,12 @@ hand. Changes so far that need this:
   `X-Forwarded-For` (see the project README), or every visitor shares the proxy's
   address. Tests that use `client.login(...)` must switch to
   `client.force_login(user)`.
+- **Uploaded files:** nothing to add; uploads stay on local disk unless you set
+  `DJANGO_MEDIA_STORAGE=s3` (see the project README's Uploaded files section).
+  `config/urls.py` now serves `/media/` in development: if your project already added
+  its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
+  `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
+  `if media_storage == ...` block.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.
