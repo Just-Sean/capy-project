@@ -4,7 +4,6 @@ requests are capped in size, and with the app down visitors get the site's page 
 the real status. Needs the Docker daemon running (it starts a container)."""
 
 import http.client
-import re
 import shutil
 import socket
 import subprocess
@@ -14,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.test_compose import PRODUCTION, config, copy_compose_files
+
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-COMPOSE_FILE = PROJECT_DIR / "compose.prod.yaml"
 DEPLOY_DIR = PROJECT_DIR / "deploy"
 TEMPLATES_DIR = PROJECT_DIR / "templates"
 
@@ -26,28 +26,45 @@ def docker(*args, check=True):
     return subprocess.run([executable, *args], capture_output=True, text=True, check=check)
 
 
-def caddy_image():
-    match = re.search(r"image: (caddy:\S+)", COMPOSE_FILE.read_text())
-    assert match, "compose.prod.yaml has no caddy image"
-    return match.group(1)
+@pytest.fixture(scope="module")
+def production_caddy(tmp_path_factory):
+    """compose.prod.yaml's caddy service, as Compose merges it."""
+    project = copy_compose_files(tmp_path_factory.mktemp("compose"))
+    return config(project, *PRODUCTION)["services"]["caddy"]
 
 
-def test_the_caddyfile_is_valid():
+def test_the_caddyfile_is_valid(production_caddy):
     # Caddy's own check, with the production site address (HTTPS).
     result = docker(
         "run", "--rm", "--env", "SITE_ADDRESS=example.com",
         "--volume", f"{DEPLOY_DIR}:/etc/caddy:ro",
-        caddy_image(), "caddy", "validate", "--config", "/etc/caddy/Caddyfile",
+        production_caddy["image"], "caddy", "validate", "--config", "/etc/caddy/Caddyfile",
         check=False,
     )  # fmt: skip
     assert result.returncode == 0, result.stderr
 
 
+def lockdown(service):
+    """compose.prod.yaml's lockdown for a service, as `docker run` options: the same
+    capabilities, read-only filesystem and in-memory folders."""
+    options = ["--read-only"] if service.get("read_only") else []
+    for capability in service.get("cap_drop", []):
+        options += ["--cap-drop", capability]
+    for capability in service.get("cap_add", []):
+        options += ["--cap-add", capability]
+    for option in service.get("security_opt", []):
+        options += ["--security-opt", option]
+    for folder in service.get("tmpfs", []):
+        options += ["--tmpfs", folder]
+    return options
+
+
 @pytest.fixture(scope="module")
-def caddy(tmp_path_factory):
+def caddy(tmp_path_factory, production_caddy):
     """Caddy with the project's Caddyfile over plain HTTP, locked down as in
     compose.prod.yaml, with uploads in its media folder and no app behind it (as when
-    the app is down). Yields the local port it answers on."""
+    the app is down). Its certificate folders are in memory here, not volumes. Yields
+    the local port it answers on."""
     media = tmp_path_factory.mktemp("media")
     (media / "page.html").write_text("<script>alert(1)</script>")
     (media / "uploads").mkdir()
@@ -61,14 +78,13 @@ def caddy(tmp_path_factory):
     name = f"caddyfile-test-{uuid.uuid4().hex[:8]}"
     docker(
         "run", "--detach", "--name", name, "--env", "SITE_ADDRESS=:80",
-        "--cap-drop", "ALL", "--cap-add", "NET_BIND_SERVICE",
-        "--security-opt", "no-new-privileges:true", "--read-only",
-        "--tmpfs", "/tmp", "--tmpfs", "/data", "--tmpfs", "/config",
+        *lockdown(production_caddy),
+        "--tmpfs", "/data", "--tmpfs", "/config",
         "--volume", f"{DEPLOY_DIR}:/etc/caddy:ro",
         "--volume", f"{TEMPLATES_DIR}:/srv/errors:ro",
         "--volume", f"{media}:/srv/media:ro",
         "--publish", "127.0.0.1::80",
-        caddy_image(),
+        production_caddy["image"],
     )  # fmt: skip
     try:
         port = int(docker("port", name, "80/tcp").stdout.strip().rsplit(":", 1)[1])

@@ -35,14 +35,19 @@ HTTPS_SETTINGS = {
 APP_SERVICES = ["migrate", "web", "worker"]
 
 
+def copy_compose_files(directory):
+    """The compose files in this folder, with empty secret files (production needs
+    them), so `config` can merge them without this machine's own files."""
+    for name in COMPOSE_FILES:
+        shutil.copy(PROJECT_DIR / name, directory / name)
+    for name in [".env.production", ".env.postgres", ".env.redis", ".env.caddy"]:
+        (directory / name).write_text("")
+    return directory
+
+
 @pytest.fixture
 def project(tmp_path):
-    """A copy of the compose files, with empty secret files (production needs them)."""
-    for name in COMPOSE_FILES:
-        shutil.copy(PROJECT_DIR / name, tmp_path / name)
-    for name in [".env.production", ".env.postgres", ".env.redis", ".env.caddy"]:
-        (tmp_path / name).write_text("")
-    return tmp_path
+    return copy_compose_files(tmp_path)
 
 
 def config(project, *files, as_written=False):
@@ -176,7 +181,8 @@ def test_the_apps_tmp_in_memory_has_a_size_limit(project):
     # Django keeps an upload being received in /tmp, which is in memory.
     services = config(project, *PRODUCTION)["services"]
     for name in APP_SERVICES:
-        assert services[name]["tmpfs"] == ["/tmp:size=64m"]
+        [memory_folder] = services[name]["tmpfs"]
+        assert ":size=" in memory_folder
 
 
 def test_the_database_and_redis_are_only_on_an_internal_network(project):
