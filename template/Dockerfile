@@ -1,4 +1,5 @@
-# Production image. Build and run it, with its migrate step, Postgres and Redis, using:
+# Production image, for the app, the migrate step and the background-job worker. Build and
+# run it, with Postgres and Redis, using:
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build
 # Development doesn't use this: Django runs on your machine, only Postgres and Redis run
 # in Docker.

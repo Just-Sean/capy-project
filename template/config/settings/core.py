@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     # serves them in development too, with the same headers (including the CSP).
     "whitenoise.runserver_nostatic",
     "django.contrib.staticfiles",
+    "django_tasks_db",  # background jobs in production: see tasks.py
 ]
 
 MIDDLEWARE = [

@@ -31,7 +31,7 @@ HTTPS_SETTINGS = {
     "DJANGO_CSRF_COOKIE_SECURE",
     "DJANGO_SECURE_HSTS_SECONDS",
 }
-APP_SERVICES = ["migrate", "web"]
+APP_SERVICES = ["migrate", "web", "worker"]
 
 
 @pytest.fixture
@@ -126,9 +126,9 @@ def test_the_database_is_ready_only_once_it_answers_over_tcp(project):
 # --- Production ------------------------------------------------------------------
 
 
-def test_production_runs_postgres_redis_migrate_and_the_app(project):
+def test_production_runs_postgres_redis_migrate_the_app_and_the_worker(project):
     services = config(project, *PRODUCTION)["services"]
-    assert set(services) == {"db", "redis", "migrate", "web"}
+    assert set(services) == {"db", "redis", "migrate", "web", "worker"}
 
 
 def test_production_is_a_separate_project_from_development(project):
@@ -148,7 +148,8 @@ def test_production_secrets_come_only_from_env_files(project):
 def test_only_the_app_is_published_and_only_on_this_machine(project):
     services = config(project, *PRODUCTION)["services"]
     assert host_ips(services["web"]) == {"127.0.0.1"}
-    assert [name for name in ["db", "redis", "migrate"] if "ports" in services[name]] == []
+    unpublished = ["db", "redis", "migrate", "worker"]
+    assert [name for name in unpublished if "ports" in services[name]] == []
     assert [name for name, service in services.items() if "network_mode" in service] == []
 
 
@@ -159,18 +160,20 @@ def test_the_database_and_redis_are_only_on_an_internal_network(project):
     assert production["networks"]["backend"]["internal"] is True
 
 
-def test_production_migrates_before_the_app_starts(project):
+def test_production_migrates_before_the_app_and_worker_start(project):
     services = config(project, *PRODUCTION)["services"]
     assert services["migrate"]["depends_on"]["db"]["condition"] == "service_healthy"
-    assert services["web"]["depends_on"]["migrate"]["condition"] == (
-        "service_completed_successfully"
-    )
+    for name in ["web", "worker"]:
+        assert services[name]["depends_on"]["migrate"]["condition"] == (
+            "service_completed_successfully"
+        )
     assert services["migrate"]["command"][-2:] == ["migrate", "--noinput"]
 
 
-def test_the_app_starts_once_redis_is_ready(project):
-    web = config(project, *PRODUCTION)["services"]["web"]
-    assert web["depends_on"]["redis"]["condition"] == "service_healthy"
+def test_the_app_and_worker_start_once_redis_is_ready(project):
+    services = config(project, *PRODUCTION)["services"]
+    for name in ["web", "worker"]:
+        assert services[name]["depends_on"]["redis"]["condition"] == "service_healthy"
 
 
 def test_migrate_runs_once_and_has_no_health_check(project):
@@ -193,7 +196,7 @@ def test_the_app_and_redis_run_locked_down(project):
 
 def test_production_restarts_after_a_crash(project):
     services = config(project, *PRODUCTION)["services"]
-    restarts = {services[name]["restart"] for name in ["db", "redis", "web"]}
+    restarts = {services[name]["restart"] for name in ["db", "redis", "web", "worker"]}
     assert restarts == {"unless-stopped"}
 
 
@@ -206,11 +209,28 @@ def test_the_app_gets_longer_to_stop_than_gunicorn_needs(project):
     assert int(grace[:-1]) > gunicorn["graceful_timeout"]
 
 
+def test_the_worker_runs_jobs_with_the_apps_files_and_no_web_health_check(project):
+    services = config(project, *PRODUCTION)["services"]
+    worker = services["worker"]
+    assert worker["command"][-2:] == ["manage.py", "db_worker"]
+    assert worker["image"] == services["web"]["image"]
+    assert worker["healthcheck"]["disable"] is True  # the image's check calls /healthz
+    assert worker["volumes"] == services["web"]["volumes"]  # the same uploaded files
+
+
+def test_the_worker_gets_time_to_finish_its_job(project):
+    # As written: Compose would show 60s as 1m0s.
+    services = config(project, *PRODUCTION, as_written=True)["services"]
+    grace = services["worker"]["stop_grace_period"]
+    assert re.fullmatch(r"\d+s", grace), f"write stop_grace_period in whole seconds: {grace}"
+    assert int(grace[:-1]) >= 60
+
+
 # --- The local HTTP check --------------------------------------------------------
 
 
 def test_only_the_local_http_file_turns_the_https_settings_off(project):
     services = config(project, *LOCAL_HTTP, as_written=True)["services"]
     assert set(services["web"]["environment"]) == HTTPS_SETTINGS
-    others = ["db", "redis", "migrate"]
+    others = ["db", "redis", "migrate", "worker"]
     assert [name for name in others if "environment" in services[name]] == []

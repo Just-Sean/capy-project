@@ -13,6 +13,8 @@ dependencies = [
     "argon2-cffi>=25.1",           # Argon2 password hashing (see PASSWORD_HASHERS)
     "django-axes>=9.0",            # login rate limiting (locks out repeated failed logins)
     "django-storages[s3]>=1.14.6", # uploaded files in S3, if DJANGO_MEDIA_STORAGE=s3
+    "django-tasks-db==0.13.0",     # background jobs in production (exact: pre-1.0, so
+                                   # an update could change its tables or worker)
 ]
 
 [dependency-groups]

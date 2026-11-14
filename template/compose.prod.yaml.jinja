@@ -1,4 +1,5 @@
-# Production: Postgres, Redis, the migrate step and the app. Run it with
+# Production: Postgres, Redis, the migrate step, the app and the background-job worker.
+# Run it with
 #   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
 # Secrets come from three files next to this one, never from this file or the image
 # (git and .dockerignore both ignore them; see the README for what goes in each):
@@ -10,7 +11,7 @@
 # from development's even on the same machine.
 name: {{ project_slug }}-production
 
-# The app image, as both the migrate step and the app run it. Locked down: no Linux
+# The app image, as the migrate step, the app and the worker run it. Locked down: no Linux
 # capabilities, no way to gain privileges, and a read-only filesystem apart from /tmp
 # and the uploads volume.
 x-app: &app
@@ -75,6 +76,28 @@ services:
     # Longer than Gunicorn's graceful_timeout (30 s), so requests in progress finish
     # before Docker force-stops the container.
     stop_grace_period: 35s
+
+  # Runs background jobs: those the app enqueued, stored in the database. Same image,
+  # settings and lockdown as the app, but it serves nothing, so no port or web health
+  # check. Starts only once migrate succeeded, like the app.
+  worker:
+    <<: *app
+    command: ["python", "manage.py", "db_worker"]
+    healthcheck:
+      disable: true                    # it never serves /healthz
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    # default lets jobs reach the internet (a mail server, S3), like the app.
+    networks: [backend, default]
+    volumes:
+      - media:/app/media               # the same uploaded files the app sees
+    restart: unless-stopped
+    # On stop, the worker finishes the job in progress, then exits. A job still running
+    # after this is killed and stays marked as running, so keep each job well under 60s.
+    stop_grace_period: 60s
 
 networks:
   backend:

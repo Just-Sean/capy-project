@@ -36,9 +36,10 @@ the production image, installs exactly the same thing. Commit it whenever it cha
 | `uv run pre-commit run --all-files` | Run the commit checks (ruff) on every file |
 | pip-audit | Check the packages for known vulnerabilities: see [Before every pull request](#before-every-pull-request) |
 | `uv run ruff check .` / `uv run ruff format .` | Check for problems / format the code |
+| `docker compose -f compose.yaml -f compose.prod.yaml run --rm worker python manage.py prune_db_task_results` | Delete finished background jobs older than 14 days (production): see [Background jobs](#background-jobs) |
 | `uv run python manage.py axes_reset` | Unlock everyone locked out by login rate limiting: see [Security](#security) |
 | `uv add <package>` | Add a dependency (updates pyproject.toml and uv.lock) |
-| `docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build` | Build and run production on this machine (migrate step, then the app) at http://localhost:8000/staff/: see [Production](#production-the-real-image-run-locally) |
+| `docker compose -f compose.yaml -f compose.prod.yaml -f compose.local-http.yaml up --build` | Build and run production on this machine (migrate step, then the app and the job worker) at http://localhost:8000/staff/: see [Production](#production-the-real-image-run-locally) |
 | `copier update` | Pull in improvements from the starter template |
 
 ## Environments
@@ -143,12 +144,13 @@ docker compose stop                   # stop Postgres
 ### Production (the real image, run locally)
 
 `compose.prod.yaml` runs production: Postgres and Redis, then a `migrate` step that applies
-migrations and exits, then the app (it only starts if `migrate` succeeded). It's a
+migrations and exits, then the app and the background-job `worker` (both only start
+if `migrate` succeeded). It's a
 separate Compose project (`{{ project_slug }}-production`) with its own database, so it
 never touches your development data.
 
-The app runs locked down: no Linux capabilities, a read-only filesystem (uploads go to
-the `media` volume). Redis runs the same way, as its own non-root user with a login.
+The app and the worker run locked down: no Linux capabilities, a read-only filesystem
+(uploads go to the `media` volume). Redis runs the same way, as its own non-root user with a login.
 The database and Redis are only on an internal network with no published port. The
 app is published on this machine only (127.0.0.1:8000), for a reverse proxy.
 
@@ -156,7 +158,7 @@ Secrets come from three files next to it, which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
-| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). If the app sends email (password resets included), also `EMAIL_URL` and `DJANGO_DEFAULT_FROM_EMAIL`: see [Email](#email). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
+| `.env.production` | the app, the worker and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). If the app sends email (password resets included), also `EMAIL_URL` and `DJANGO_DEFAULT_FROM_EMAIL`: see [Email](#email). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
 | `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 
@@ -206,10 +208,10 @@ With it running (in another terminal, or started with `-d`), make an admin login
 docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py createsuperuser
 ```
 
-If the app doesn't start, the `migrate` step probably failed. See why with:
+If the app or the worker doesn't start, the `migrate` step probably failed. See why with:
 
 ```bash
-docker compose -f compose.yaml -f compose.prod.yaml logs migrate web
+docker compose -f compose.yaml -f compose.prod.yaml logs migrate web worker
 ```
 
 Stop:
@@ -230,7 +232,7 @@ proxy (for example a CDN in front), change `config/login_limits.py`. Start it wi
 `compose.local-http.yaml`, so the HTTPS protections stay on:
 `docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`.
 
-Each run of that command migrates first, while the old app keeps serving, so a
+Each run of that command migrates first, while the old app and worker keep running, so a
 migration must still work with the code already running (add things first, remove
 them in a later release). There is no rollback to a previous image yet; a later
 version of the starter adds versioned images and deploy steps.
@@ -241,7 +243,7 @@ answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balanc
 
 **Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
 
-- **Workers:** set `WEB_CONCURRENCY` in the app's environment, about 2 x CPU cores + 1
+- **Gunicorn workers (web requests, not background jobs):** set `WEB_CONCURRENCY` in the app's environment, about 2 x CPU cores + 1
   (default 1): in `.env.production` with Docker Compose, or `Environment=` in a
   systemd service. Each worker checking a login at the same moment uses about 100 MB
   (Argon2), so on a small server leave room for that.
@@ -346,6 +348,88 @@ docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py se
 ```
 
 Without `EMAIL_URL`, the production one fails with "Email isn't set up".
+
+### Background jobs
+
+Slow work (sending email, resizing an upload, calling another service) can run outside
+the request, with Django's Tasks API. Write a job as a function with `@task` in an
+app's `tasks.py`, and enqueue it:
+
+```python
+# reports/tasks.py
+from django.tasks import task
+
+
+@task
+def build_report(report_id):
+    """Build the report and save it."""
+```
+
+```python
+build_report.enqueue(report.id)  # in a view: returns at once, the job runs later
+```
+
+Arguments and return values must be JSON-friendly: pass an id, not a model instance,
+and look the rest up inside the job. Never pass or return passwords, tokens, signed
+links, API keys or personal data: in production they're stored in the database, with
+the error of a failed job, and admins can read them.
+
+Enqueue from inside a database transaction (a view saving something) with
+`transaction.on_commit(lambda: build_report.enqueue(report.id))`, so the job only exists
+if the save went through. In production a rolled-back job is never stored, but in
+development and tests it would already have run.
+
+| Environment | What happens |
+| --- | --- |
+| Development and tests | The job runs straight away, inside the request or test that enqueued it, so there's no worker to start. A job that raises an error doesn't break the request or fail the test: the result's `status` is `FAILED` and `result.errors` holds the error, so tests should check `result.status` |
+| Production | The job is stored in the database (`django-tasks-db`), and the `worker` service (`manage.py db_worker`) runs it |
+
+A few things only work in production, because development and tests store nothing:
+running a job later (`build_report.using(run_after=...)`) and looking a result up by id
+(`build_report.get_result(id)`). And there, arguments and results go through JSON, so
+a dict's number keys arrive as strings and bytes can't be returned.
+
+Jobs are kept in Postgres, not Redis, because Redis here is only a cache that saves
+nothing to disk: jobs waiting in it would be lost on a restart. `django-tasks-db` is
+pinned to one exact version because it's not yet 1.0, so a new version could change
+its tables or worker. To update it, read its release notes, then run
+`uv add django-tasks-db==<version>`, `uv run python manage.py migrate` and
+`uv run pytest`.
+
+The worker runs one job at a time. For more at once, start more copies, and they share
+the work: add `--scale worker=2` to every `up` command (without it, the next deploy goes
+back to one), e.g.
+`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait --scale worker=2`.
+
+When the worker is stopped (a redeploy, or `down`), it finishes the job in progress
+first, for up to 60 seconds (`stop_grace_period` in `compose.prod.yaml`). A job still
+running after that, or when the server loses power, is killed and stays marked as
+running for good: keep each job well under 60 seconds (split long work into smaller
+jobs), and after an unclean stop, look in the admin's job list for jobs still running
+and enqueue them again. Jobs waiting when you redeploy are run by the new code, so when
+you change a job's arguments, keep accepting the old ones until those jobs have run (or
+give the changed job a new name). The worker has no health check yet: a stuck one
+still shows as running in `docker compose ps`, so give network calls in jobs their own
+timeouts.
+
+In production, jobs and their results (including a failed job's error) are listed,
+read-only, in the admin. Development and tests store nothing, so the list stays empty
+there.
+
+Finished jobs (successful or failed) stay in the database until you delete them. This
+deletes those that finished more than 14 days ago (`--min-age-days 30` keeps a month):
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml run --rm worker python manage.py prune_db_task_results
+docker compose -f compose.yaml -f compose.prod.yaml run --rm worker python manage.py prune_db_task_results --dry-run   # only count them
+```
+
+Run it daily on the server, for example from cron. Cron has no terminal, so add `-T`,
+and `cd` into the project folder first:
+
+```bash
+0 3 * * * cd /path/to/project && docker compose -f compose.yaml -f compose.prod.yaml run --rm -T worker python manage.py prune_db_task_results
+```
 
 ### Checking what's running, and cleaning up
 
@@ -521,7 +605,7 @@ uv run pytest --cov
 
 | Path | Purpose |
 | --- | --- |
-| `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
+| `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `tasks.py` (background jobs), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
 | `config/urls.py` | The root URL map; each app adds its URLs here. Also serves uploaded files at `/media/` in development |
 | `config/middleware.py` | Answers `/healthz` before anything else runs |
 | `config/email_not_set_up.py` | The email backend production uses without `EMAIL_URL`: sending fails with a clear error instead of the email being lost |
@@ -535,9 +619,10 @@ uv run pytest --cov
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
-| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
+| `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop and the worker time to finish its job |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
+| `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
 | `tests/test_email.py` | Proves email is printed in development, always kept in memory in tests, and in production either fails clearly when not set up or goes over an encrypted connection (with a From address and a timeout), a login never goes over plain SMTP, and unsafe, incomplete or unreadable `EMAIL_URL`s (such as a password that wasn't percent-encoded) are refused without showing the password |
 | `tests/test_uploaded_files.py` | Proves uploads are local by default, never replace an existing file and can't escape the media folder, only development serves them, S3 files are private downloads with SigV4 links that expire after an hour, keys come from the environment and never appear in Django's settings (without them, the server's role is used), and bad upload settings are refused |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
@@ -545,7 +630,7 @@ uv run pytest --cov
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
-| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step and the app, with secrets from `.env.production`, `.env.postgres` and `.env.redis` |
+| `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app and the job worker, with secrets from `.env.production`, `.env.postgres` and `.env.redis` |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off. Never on a server |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
