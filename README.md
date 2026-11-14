@@ -20,6 +20,8 @@ gets only what has to exist on day one:
   production and only over an encrypted connection there
 - Background jobs with Django's Tasks API: run straight away in development and tests,
   stored in the database and run by a worker service in production (django-tasks-db)
+- Logs as one JSON object per line in production (Gunicorn's too, without query strings),
+  readable text in development, and reports of what the Content Security Policy blocked
 - A production Dockerfile (uv, non-root, Gunicorn, WhiteNoise)
 - pytest (with an 80% coverage minimum and a missing-migrations check) and Ruff
 - pre-commit (gitleaks and Ruff on every commit) and pip-audit
@@ -68,6 +70,14 @@ hand. Changes so far that need this:
   its own `static(settings.MEDIA_URL, ...)` line, remove yours. If you changed
   `STORAGES["default"]` in `config/settings/files.py`, keep your change in the new
   `if media_storage == ...` block.
+- **Logs:** production now writes one JSON object per line (Gunicorn's request lines
+  too, without query strings). If something reads your production logs as text,
+  switch it to JSON. If your project set `ADMINS`, Django no longer emails it errors:
+  they're only logged. If your project changed `LOGGING` in `config/settings/logs.py`,
+  or logging in `gunicorn.conf.py`, keep your change alongside the new setup. The
+  Content Security Policy now reports to `/csp-report/` (if your project has its own
+  URL at that path, move one of them), so in development the `runserver` terminal now
+  also shows what the policy would block.
 - **Background jobs:** run `uv sync` (commit the updated `uv.lock`) and
   `uv run python manage.py migrate` (django-tasks-db adds its tables; production's
   `migrate` step does this by itself). In production, enqueued jobs no longer run inside

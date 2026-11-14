@@ -431,6 +431,53 @@ and `cd` into the project folder first:
 0 3 * * * cd /path/to/project && docker compose -f compose.yaml -f compose.prod.yaml run --rm -T worker python manage.py prune_db_task_results
 ```
 
+### Logs
+
+Everything is written to the console, where `runserver`, Docker, systemd or the hosting
+platform collects it. Development and tests write readable lines:
+
+```text
+2026-11-14 05:16:03,942 WARNING csp: CSP violation: ...
+```
+
+Production writes one JSON object per line, so log tools can search by field:
+
+```json
+{"time": "2026-11-14T05:16:03.942+00:00", "level": "ERROR", "logger": "django.request", "message": "Internal Server Error: /page/", "request": "GET /page/", "status": 500, "exception": "Traceback ..."}
+```
+
+- **Errors** always include their stack trace (`exception`), on the same line. They're
+  never emailed, even if you set `ADMINS`: watch the logs, or send them to an error
+  tracker. (To get emails, add Django's `mail_admins` handler to the `django` logger in
+  `config/settings/logs.py`.) Python's warnings are logged too, as `py.warnings`.
+- **Gunicorn's** own lines (`gunicorn.error`) and one line per request
+  (`gunicorn.access`) are JSON too, with the request's details as text in `message`:
+  address, method, path, status, bytes, milliseconds and browser. Behind a reverse
+  proxy the address is the proxy's; the visitor's is in the proxy's own logs. Docker's
+  health check adds a `GET /healthz` line every 30 seconds.
+- **What's in them:** request lines leave out query strings, which often carry tokens,
+  but a path can still hold one (Django's password reset links do), the secret admin
+  path shows up, and addresses and browsers are personal data. Keep logs as private as
+  the database, and decide how long to keep them.
+- **Less or more detail:** `DJANGO_LOG_LEVEL` is `INFO` by default. Set it to `WARNING`
+  for less, or `DEBUG` for more (for a short while only: some libraries log request
+  headers at `DEBUG`), in `.env` (development) or `.env.production` (the app and the
+  worker), then restart with `docker compose -f compose.yaml -f compose.prod.yaml up -d`.
+  Gunicorn's own lines stay at `INFO`; its `--log-level` option has no effect, because
+  the levels are set in `gunicorn.conf.py`.
+- **Not JSON:** command output (such as the `migrate` step's progress) is printed, not
+  logged, and `runserver`'s request lines keep Django's own format.
+- **Disk space:** Docker keeps container logs without a size limit by default, and
+  anyone can add lines (every request does). Until the starter sets limits, set them on
+  the server, e.g. in `/etc/docker/daemon.json`:
+  `{"log-driver": "local", "log-opts": {"max-size": "10m", "max-file": "5"}}`.
+- The formats are in `config/logging.py` and the setup in `config/settings/logs.py`;
+  Gunicorn's is `logconfig_dict` in `gunicorn.conf.py`.
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml logs -f web worker   # follow production's logs
+```
+
 ### Checking what's running, and cleaning up
 
 ```bash
@@ -508,6 +555,15 @@ unless noted.
   - In **development** the policy only reports (Django's yellow debug pages use inline
     styles): the browser's console shows what it would block. Tests and production
     enforce it, so check the console before you commit.
+  - Browsers send what the policy blocked to `/csp-report/` (the policy's `report-uri`),
+    which logs a short summary as a `csp` warning: the page, the rule and what was
+    blocked, without logins, query strings or code samples. A run of them after a
+    deploy usually means the policy blocks something a page needs; a few odd ones are
+    often browser extensions. In development they also show in the `runserver`
+    terminal, including expected ones from Django's yellow error pages. Reports bigger
+    than 10 KB, or not sent as `application/csp-report`, are refused. Anyone can send
+    reports, so a flood shows up in the logs: give `/csp-report/` a rate limit in your
+    reverse proxy (not set up yet).
 - **HSTS preload is off on purpose.** Being on browsers' preload list is hard to undo
   (removal takes months) and covers every subdomain, so each project opts in when it's
   ready:
@@ -606,8 +662,10 @@ uv run pytest --cov
 | Path | Purpose |
 | --- | --- |
 | `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `tasks.py` (background jobs), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
-| `config/urls.py` | The root URL map; each app adds its URLs here. Also serves uploaded files at `/media/` in development |
+| `config/urls.py` | The root URL map; each app adds its URLs here. Also `/csp-report/`, and uploaded files at `/media/` in development |
 | `config/middleware.py` | Answers `/healthz` before anything else runs |
+| `config/logging.py` | The log formats: one JSON object per line in production, readable text otherwise |
+| `config/csp_report.py` | Logs a short summary of each report of what the Content Security Policy blocked (`/csp-report/`) |
 | `config/email_not_set_up.py` | The email backend production uses without `EMAIL_URL`: sending fails with a clear error instead of the email being lost |
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
@@ -625,9 +683,11 @@ uv run pytest --cov
 | `tests/test_tasks.py` | Proves a job runs straight away in development and tests, production stores jobs in the database, and the worker runs a stored job and records a failing one as failed |
 | `tests/test_email.py` | Proves email is printed in development, always kept in memory in tests, and in production either fails clearly when not set up or goes over an encrypted connection (with a From address and a timeout), a login never goes over plain SMTP, and unsafe, incomplete or unreadable `EMAIL_URL`s (such as a password that wasn't percent-encoded) are refused without showing the password |
 | `tests/test_uploaded_files.py` | Proves uploads are local by default, never replace an existing file and can't escape the media folder, only development serves them, S3 files are private downloads with SigV4 links that expire after an hour, keys come from the environment and never appear in Django's settings (without them, the server's role is used), and bad upload settings are refused |
+| `tests/test_logs.py` | Proves log lines are one JSON object each in production (stack traces and line breaks included, request query strings left out) and readable text in development, errors are logged once with their stack trace and never emailed, and Gunicorn can set up the same JSON logs without query strings |
+| `tests/test_csp_report.py` | Proves a CSP report is logged as a short summary without query strings, samples or fake extra lines, and that huge reports, things that aren't reports and GETs are refused |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
-| `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
+| `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, JSON logs to stdout and stderr |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |
 | `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app and the job worker, with secrets from `.env.production`, `.env.postgres` and `.env.redis` |

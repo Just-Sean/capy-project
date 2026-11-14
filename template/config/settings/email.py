@@ -82,5 +82,6 @@ DEFAULT_FROM_EMAIL = env("DJANGO_DEFAULT_FROM_EMAIL", default="")
 if IS_PRODUCTION and email_url and not DEFAULT_FROM_EMAIL:
     raise ImproperlyConfigured("Set DJANGO_DEFAULT_FROM_EMAIL: EMAIL_URL is set.")
 DEFAULT_FROM_EMAIL = DEFAULT_FROM_EMAIL or "webmaster@localhost"
-# The From: of Django's own messages (error emails, if ADMINS is ever set).
+# The From: of emails Django sends to ADMINS or MANAGERS (mail_admins()). Request
+# errors are logged, never emailed: see logs.py.
 SERVER_EMAIL = DEFAULT_FROM_EMAIL

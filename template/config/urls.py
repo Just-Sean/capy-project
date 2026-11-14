@@ -5,9 +5,13 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path
 
+from config.csp_report import csp_report
+
 urlpatterns = [
     # The admin lives at a path set in the environment, never "admin/" in production.
     path(settings.ADMIN_URL, admin.site.urls),
+    # Where browsers report what the Content Security Policy blocked.
+    path("csp-report/", csp_report, name="csp-report"),
 ]
 
 # Development serves uploaded files itself. static() adds nothing unless DEBUG is on, so
