@@ -62,21 +62,25 @@ hand. Changes so far that need this:
   Before updating, search your templates for `<script`, `<style`, `style=` and `on…=`,
   and see the project README's Security section.
 - **Settings split by topic:** `config/settings.py` became the `config/settings/`
-  package (one file per topic). If your project changed `config/settings.py`:
-  1. Before updating, note your changes, e.g. with `git log -p -- config/settings.py`.
-  2. Run `copier update`, then `git status`. Copier may delete `config/settings.py`
-     even though you changed it, or leave it in place; either way your changes are
-     still in git history (step 1).
-  3. Copy each change into the topic file it belongs in: `environment.py`
+  package (one file per topic). **`copier update` deletes `config/settings.py` even if
+  your project changed it, with no conflict and no warning**, so your own settings
+  changes are lost unless you move them. They're still in git until you commit the
+  update:
+  1. Run `copier update`. `git status` shows `config/settings.py` as deleted.
+  2. Before committing, see what your project had changed:
+     `git log -p -- config/settings.py` (every change since the project was made), or
+     `git diff HEAD -- config/settings.py` (the whole old file).
+  3. Copy each of your changes into the topic file it belongs in: `environment.py`
      (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time
      and language), `database.py` (and the cache), `users.py` (passwords, login limits),
      `files.py` (static and uploaded files), `security.py` (HTTPS, headers, CSP),
      `logs.py`.
-  4. Delete `config/settings.py` if it's still there. Django would otherwise ignore it,
-     so the settings refuse to start until it's gone.
-  5. Run `uv run pytest`.
+  4. Don't restore `config/settings.py`: Django would ignore it, so the settings refuse
+     to start while it exists.
+  5. Run `uv run pytest`, then commit.
 
-  `DJANGO_SETTINGS_MODULE` is still `config.settings` and every setting keeps its value.
+  `DJANGO_SETTINGS_MODULE` is still `config.settings`, and the starter's own settings
+  keep their values.
   Code that imported `env` from `config.settings` must now import it from
   `config.settings.environment`.
 - **Postgres image:** projects made before the compose split used the pgvector image.
