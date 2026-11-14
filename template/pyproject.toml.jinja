@@ -12,6 +12,7 @@ dependencies = [
     "redis>=8.1",                  # Redis client for Django's built-in Redis cache
     "argon2-cffi>=25.1",           # Argon2 password hashing (see PASSWORD_HASHERS)
     "django-axes>=9.0",            # login rate limiting (locks out repeated failed logins)
+    "django-storages[s3]>=1.14.6", # uploaded files in S3, if DJANGO_MEDIA_STORAGE=s3
 ]
 
 [dependency-groups]
