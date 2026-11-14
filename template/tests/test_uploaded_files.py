@@ -58,9 +58,8 @@ def test_s3_is_private_signed_and_never_overwrites():
 
 def test_s3_keys_are_used_only_when_given():
     # Without keys, boto3 uses the server's own role instead.
-    result = run_manage(
-        "shell", "-c", PRINT_STORAGE, AWS_ACCESS_KEY_ID="AKIAEXAMPLE", AWS_SECRET_ACCESS_KEY="x", **S3
-    )
+    keys = {"AWS_ACCESS_KEY_ID": "AKIAEXAMPLE", "AWS_SECRET_ACCESS_KEY": "x"}
+    result = run_manage("shell", "-c", PRINT_STORAGE, **keys, **S3)
     assert "'access_key'" in last_line(result) and "'secret_key'" in last_line(result)
 
 
