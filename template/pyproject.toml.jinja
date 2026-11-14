@@ -10,6 +10,7 @@ dependencies = [
     "gunicorn>=26",                # production web server
     "whitenoise>=6.12",            # serves static files (the admin's CSS/JS) in production
     "redis>=8.1",                  # Redis client for Django's built-in Redis cache
+    "argon2-cffi>=25.1",           # Argon2 password hashing (see PASSWORD_HASHERS)
 ]
 
 [dependency-groups]
