@@ -237,6 +237,7 @@ uv run pytest --cov
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
+| `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
