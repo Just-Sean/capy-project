@@ -237,9 +237,25 @@ migration must still work with the code already running (add things first, remov
 them in a later release). There is no rollback to a previous image yet; a later
 version of the starter adds versioned images and deploy steps.
 
-<http://localhost:8000/healthz> returns `ok`. It never touches the database and
-answers whatever the Host header is, so the Docker `HEALTHCHECK` and load balancers
-(which call it by IP) can poll it.
+Two health checks answer whatever the Host header is, before the HTTPS redirect, so
+load balancers and proxies (which call them by IP, often over plain HTTP) can poll them:
+
+| URL | Answers `ok` when | Otherwise | Used by |
+| --- | --- | --- | --- |
+| <http://localhost:8000/healthz> | The app is running. It never touches the database or Redis | No answer | Docker's `HEALTHCHECK`. A database outage doesn't make Docker restart every app container |
+| <http://localhost:8000/readyz> | The database and Redis answer too | 503 `not ready`, and a `Not ready: database failed` (or `cache`) warning in the logs | A load balancer or reverse proxy, to stop sending visitors to an app that can't serve them |
+
+The database connection gives up after 5 seconds (`connect_timeout` in
+`config/settings/database.py`; a `?connect_timeout=10` in `DATABASE_URL` overrides it),
+so `/readyz` answers quickly even when the database doesn't.
+
+The `worker` has its own Docker health check, `python -m config.health worker`, every
+minute. It's unhealthy when the database or Redis doesn't answer, or when a job has
+waited more than 5 minutes (`MAX_JOB_WAIT` in `config/health.py`), which means the
+worker is stuck, stopped or can't keep up. `docker compose ... ps` shows it as
+`unhealthy`, and `up --wait` fails. Docker doesn't restart an unhealthy container by
+itself: look at `docker compose -f compose.yaml -f compose.prod.yaml logs worker`, then
+restart it (`docker compose -f compose.yaml -f compose.prod.yaml restart worker`).
 
 **Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
 
@@ -408,9 +424,9 @@ running for good: keep each job well under 60 seconds (split long work into smal
 jobs), and after an unclean stop, look in the admin's job list for jobs still running
 and enqueue them again. Jobs waiting when you redeploy are run by the new code, so when
 you change a job's arguments, keep accepting the old ones until those jobs have run (or
-give the changed job a new name). The worker has no health check yet: a stuck one
-still shows as running in `docker compose ps`, so give network calls in jobs their own
-timeouts.
+give the changed job a new name). Give network calls in jobs their own timeouts: a job
+stuck on one holds up every job behind it, until the worker's health check (see
+[Production](#production-the-real-image-run-locally)) marks it unhealthy after 5 minutes.
 
 In production, jobs and their results (including a failed job's error) are listed,
 read-only, in the admin. Development and tests store nothing, so the list stays empty
@@ -540,7 +556,7 @@ unless noted.
   uv run python manage.py axes_reset_ip <address>                 # one address
   docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py axes_reset   # in production
   ```
-- **Security headers** on every response except `/healthz`: `X-Frame-Options: DENY`,
+- **Security headers** on every response except `/healthz` and `/readyz`: `X-Frame-Options: DENY`,
   `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and
   `Cross-Origin-Opener-Policy: same-origin`. Production adds the HTTPS redirect,
   HTTPS-only cookies and HSTS (one year, subdomains included; on a brand-new domain
@@ -670,7 +686,8 @@ uv run pytest --cov
 | --- | --- |
 | `config/settings/` | All settings, read from the environment, one file per topic: `environment.py` (`DJANGO_ENV`), `core.py` (debug, keys, hosts, apps, middleware, templates, time and language), `database.py` (and the cache), `users.py` (passwords, login limits), `files.py` (static and uploaded files), `email.py`, `tasks.py` (background jobs), `security.py` (HTTPS, headers, CSP), `logs.py`. `__init__.py` combines them |
 | `config/urls.py` | The root URL map; each app adds its URLs here. Also `/csp-report/`, and uploaded files at `/media/` in development |
-| `config/middleware.py` | Answers `/healthz` before anything else runs |
+| `config/middleware.py` | Answers `/healthz` and `/readyz` before anything else runs |
+| `config/health.py` | The checks: the database and Redis answer (`/readyz`), and the worker keeps up (`python -m config.health worker`) |
 | `config/logging.py` | The log formats: one JSON object per line in production, readable text otherwise |
 | `config/csp_report.py` | Logs a short summary of each report of what the Content Security Policy blocked (`/csp-report/`) |
 | `config/email_not_set_up.py` | The email backend production uses without `EMAIL_URL`: sending fails with a clear error instead of the email being lost |
@@ -678,6 +695,7 @@ uv run pytest --cov
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
+| `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database is down (while `/healthz` still answers), failures logged without connection details, and the worker's check fails when the database is down or a job has waited too long |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_deprecation_warnings.py` | Proves every Django deprecation warning (a deprecated setting included) fails the tests, both in pytest itself and in the `manage.py` processes tests start, that those processes otherwise run as `python manage.py` would, and that other libraries' deprecations don't fail the tests |
