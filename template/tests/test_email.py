@@ -26,10 +26,18 @@ def smtp_mailer(port, username, password, **encryption):
     return {"BACKEND": SMTP, "OPTIONS": options}
 
 
-def test_tests_capture_emails_in_memory():
+def test_tests_capture_emails_in_memory(settings):
     mail.send_mail("Hello", "Body", None, ["someone@example.com"])
     assert len(mail.outbox) == 1
-    assert mail.outbox[0].from_email == "webmaster@localhost"
+    assert mail.outbox[0].from_email == settings.DEFAULT_FROM_EMAIL
+
+
+def test_the_test_environment_ignores_a_real_mail_server_in_env():
+    result = run_manage(
+        "shell", "-c", PRINT_EMAIL_SETTINGS, DJANGO_ENV="test", EMAIL_URL="smtp://localhost:1025"
+    )
+    locmem = {"BACKEND": "django.core.mail.backends.locmem.EmailBackend"}
+    assert last_line(result).startswith(str(locmem)), result.stderr
 
 
 def test_development_prints_emails_to_the_console():
@@ -62,11 +70,15 @@ def test_without_email_sending_raises():
             smtp_mailer(465, "apikey", "s3cret", use_ssl=True),
         ),
         (
-            "smtp+tls://me%40example.com:p%40ss%2Fword@smtp.example.com",
-            smtp_mailer(None, "me@example.com", "p@ss/word", use_tls=True),
+            "smtp+tls://me%40example.com:p%40ss%2Fw%23r%3Fd+%25@smtp.example.com",
+            smtp_mailer(None, "me@example.com", "p@ss/w#r?d+%", use_tls=True),
+        ),
+        (
+            "SMTP+TLS://apikey:s3cret@smtp.example.com:587",
+            smtp_mailer(587, "apikey", "s3cret", use_tls=True),
         ),
     ],
-    ids=["STARTTLS", "SSL", "percent-encoded login, default port"],
+    ids=["STARTTLS", "SSL", "percent-encoded login, default port", "capitals"],
 )
 def test_production_sends_over_an_encrypted_connection(url, mailer):
     result = run_manage("shell", "-c", PRINT_EMAIL_SETTINGS, EMAIL_URL=url, **FROM)
@@ -81,14 +93,56 @@ def test_production_sends_over_an_encrypted_connection(url, mailer):
         ({"EMAIL_URL": "consolemail://", **FROM}, "smtp+tls://"),
         ({"EMAIL_URL": "smtp+tls://", **FROM}, "mail server's address"),
         ({"EMAIL_URL": "smtp+tls://apikey:s3cret@smtp.example.com:587"}, "DJANGO_DEFAULT_FROM"),
+        (
+            {
+                "EMAIL_URL": "smtp+tls://apikey:s3cret@smtp.example.com:587",
+                "DJANGO_DEFAULT_FROM_EMAIL": "",
+            },
+            "DJANGO_DEFAULT_FROM",
+        ),
     ],
-    ids=["plain smtp", "ambiguous smtps", "console", "no host", "no From address"],
+    ids=[
+        "plain smtp",
+        "ambiguous smtps",
+        "console",
+        "no host",
+        "no From address",
+        "empty From address",
+    ],
 )
 def test_production_refuses_unsafe_or_incomplete_email(environment, message):
     result = run_manage("check", **environment)
     assert result.returncode != 0
     assert message in result.stderr
     assert "s3cret" not in result.stderr  # the password never appears in the error
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "smtp+tls://apikey:s3cr#etpart@smtp.example.com:587",
+        "smtp+tls://apikey:s3cr?etpart@smtp.example.com:587",
+        "smtp+tls://apikey:s3cr/etpart@smtp.example.com:587",
+        "smtp+tls://apikey:12345#s3cret@smtp.example.com:587",  # would read 12345 as a port
+        "smtp+tls://apikey:s3cret@smtp.example.com:abc",
+        "smtp+tls://apikey:s3cret@smtp.example.com:99999",
+        "smtp+tls://apikey:s3cret@smtp.example.com:0",
+    ],
+    ids=["#", "?", "/", "digits then #", "word port", "port too big", "port 0"],
+)
+def test_an_unreadable_email_url_is_refused_without_showing_the_password(url):
+    result = run_manage("check", EMAIL_URL=url, **FROM)
+    assert result.returncode != 0
+    assert "EMAIL_URL couldn't be read" in result.stderr
+    assert "s3cr" not in result.stderr and "12345" not in result.stderr
+
+
+def test_development_refuses_a_login_over_plain_smtp():
+    url = "smtp://apikey:s3cret@smtp.example.com:25"
+    result = run_manage("check", DJANGO_ENV="development", EMAIL_URL=url)
+    assert result.returncode != 0
+    assert "only for a local mail catcher" in result.stderr
+    assert "s3cret" not in result.stderr
 
 
 def test_an_unknown_kind_of_email_url_is_refused():

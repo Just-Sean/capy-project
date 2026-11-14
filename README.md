@@ -71,7 +71,9 @@ hand. Changes so far that need this:
   `EMAIL_BACKEND`, `EMAIL_HOST` or other `EMAIL_*` settings, remove them and set
   `EMAIL_URL` instead (see the project README's Email section). In production, add
   `EMAIL_URL` (`smtp+tls://` or `smtp+ssl://`) and `DJANGO_DEFAULT_FROM_EMAIL` to
-  `.env.production` if the project sends email.
+  `.env.production` if the project sends email. Production now refuses to start if
+  `EMAIL_URL` is plain `smtp://` or `smtps://`, or is set without
+  `DJANGO_DEFAULT_FROM_EMAIL`.
 - **Content Security Policy:** inline scripts and styles without
   `nonce="{{ csp_nonce }}"`, `style=` attributes, `onclick=`-style handlers and files
   from other sites (CDNs, web fonts, analytics) are now blocked in tests and production.

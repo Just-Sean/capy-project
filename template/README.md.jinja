@@ -61,7 +61,8 @@ the list in `config/settings/__init__.py`, and to `TOPICS` in
 
 Production refuses to start if `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`,
 `DJANGO_ADMIN_URL`, `DATABASE_URL` or `CACHE_URL` is missing, if the admin URL is `admin/`,
-or if `DJANGO_DEBUG` is true. A misspelled `DJANGO_ENV` is refused everywhere.
+or if `DJANGO_DEBUG` is true. If `EMAIL_URL` is set, it must be `smtp+tls://` or
+`smtp+ssl://` with a server address, and needs `DJANGO_DEFAULT_FROM_EMAIL`. A misspelled `DJANGO_ENV` is refused everywhere.
 `DATABASE_URL` and `CACHE_URL` are needed in development too; `.env.example` sets both.
 `.env.example` lists and explains every variable.
 
@@ -155,7 +156,7 @@ Secrets come from three files next to it, which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
-| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
+| `.env.production` | the app and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). If the app sends email (password resets included), also `EMAIL_URL` and `DJANGO_DEFAULT_FROM_EMAIL`: see [Email](#email). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
 | `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 
@@ -307,17 +308,35 @@ one of the two keys.
 
 | Environment | Without `EMAIL_URL` | With it |
 | --- | --- | --- |
-| Development | Emails are printed in the `runserver` terminal | Any of the forms below; `smtp://localhost:1025` reaches a local mail catcher such as Mailpit |
-| Tests | Emails are kept in `django.core.mail.outbox` | Not needed |
+| Development | Emails are printed in the `runserver` terminal | Any form below, or `smtp://localhost:1025` (no login) for a local mail catcher |
+| Tests | Emails are kept in `django.core.mail.outbox` | Ignored: tests never send real email, even if `.env` sets it |
 | Production | The app runs, but sending email fails with "Email isn't set up" | `smtp+tls://USER:PASSWORD@HOST:587` (STARTTLS) or `smtp+ssl://USER:PASSWORD@HOST:465`, plus `DJANGO_DEFAULT_FROM_EMAIL` |
 
-Production refuses to start with plain `smtp://` (the login and every email, password
-reset links included, would cross the network unencrypted), with `smtps://` (it's
-unclear which kind of encryption it means), or with the console or memory backends.
-Percent-encode `@`, `/` and `:` in the user or password (`@` is `%40`). Most mail
-services (Amazon SES, Postmark, Mailgun, ...) give you SMTP login details for this, and
-only send From: addresses on a domain you've verified with them. The connection gives
-up after 10 seconds, so a slow mail server can't hold a request forever.
+The forms are `smtp+tls://`, `smtp+ssl://`, `smtp://` (no login, development only) and
+`consolemail://` (print); anything else is refused in every environment, `smtps://`
+included (it's unclear which kind of encryption it means). Production only takes
+`smtp+tls://` or `smtp+ssl://`: plain `smtp://` would send the login and every email,
+password reset links included, readable on the network.
+
+Most mail services (Amazon SES, Postmark, Mailgun, ...) give you SMTP login details for
+this, and only send From: addresses on a domain you've verified with them.
+`DJANGO_DEFAULT_FROM_EMAIL` is also the From: of Django's own messages
+(`SERVER_EMAIL`). The connection gives up after 10 seconds, so a slow mail server can't
+hold a request forever.
+
+Percent-encode every character in the user or password other than letters, digits and
+`- . _ ~` (for example `@` is `%40`, `/` is `%2F`, `#` is `%23`). Generated passwords
+(Amazon SES's, for one) often contain `/` or `+`. This prints the encoded form:
+
+```bash
+python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=''))" 'PASSWORD'
+```
+
+A password that wasn't encoded makes production refuse to start with "EMAIL_URL couldn't
+be read", without showing the password.
+
+A mail catcher such as Mailpit isn't included: if you run one, it takes mail on port
+1025 and shows it in the browser (Mailpit at <http://localhost:8025>).
 
 Check where email goes:
 
@@ -325,6 +344,8 @@ Check where email goes:
 uv run python manage.py sendtestemail you@example.com     # development
 docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py sendtestemail you@example.com   # production
 ```
+
+Without `EMAIL_URL`, the production one fails with "Email isn't set up".
 
 ### Checking what's running, and cleaning up
 
@@ -507,7 +528,7 @@ uv run pytest --cov
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app starts, runs locked down, keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit) and gives Gunicorn time to stop |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
 | `tests/test_login_rate_limit.py` | Proves repeated wrong passwords lock that username out from that address (even with the right password), a new username each time still hits the per-address limit, others aren't affected, lockouts end after `DJANGO_LOGIN_LOCKOUT_MINUTES`, a successful login clears the count, the limits come from the environment, and a faked `X-Forwarded-For` can't get around them |
-| `tests/test_email.py` | Proves email is printed in development, kept in memory in tests, and in production either fails clearly when not set up or goes over an encrypted connection (with a From address and a timeout), and unsafe or incomplete `EMAIL_URL`s are refused without showing the password |
+| `tests/test_email.py` | Proves email is printed in development, always kept in memory in tests, and in production either fails clearly when not set up or goes over an encrypted connection (with a From address and a timeout), a login never goes over plain SMTP, and unsafe, incomplete or unreadable `EMAIL_URL`s (such as a password that wasn't percent-encoded) are refused without showing the password |
 | `tests/test_uploaded_files.py` | Proves uploads are local by default, never replace an existing file and can't escape the media folder, only development serves them, S3 files are private downloads with SigV4 links that expire after an hour, keys come from the environment and never appear in Django's settings (without them, the server's role is used), and bad upload settings are refused |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
