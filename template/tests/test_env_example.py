@@ -48,7 +48,7 @@ ACTIVE = re.compile(r"(?:export )?[A-Z][A-Z0-9_]*=[^\s\"']*")
 # would silently turn a setting off.
 BOOL_READ = re.compile(r"""\benv\.bool\(\s*(?:var\s*=\s*)?["']([A-Z][A-Z0-9_]*)["']""")
 TRUE_FALSE_WORDS = {*environ.Env.BOOLEAN_TRUE_STRINGS, "false", "off", "no", "n", "0"}
-DJANGO_ENVS = {"development", "test", "production"}  # the same list as config/settings.py
+DJANGO_ENVS = {"development", "test", "production"}  # as in config/settings/environment.py
 
 
 def without_comments(source):
