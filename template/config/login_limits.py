@@ -77,5 +77,5 @@ class IPLoginLimitBackend:
             raise PermissionDenied("Too many failed logins from this address.")
         return None
 
-    def get_user(self, user_id):
-        return None
+    # No get_user(): Django would then use this backend to load logged-in users (it
+    # picks the first backend that has one), and every session would be logged out.

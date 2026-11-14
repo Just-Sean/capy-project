@@ -119,6 +119,13 @@ def test_a_successful_login_clears_the_count(client, staff):
 
 
 @pytest.mark.django_db
+def test_logged_in_users_stay_logged_in(client, staff):
+    # The rate-limit backends must never be the one Django uses to load a session's user.
+    client.force_login(staff)
+    assert client.get(f"/{settings.ADMIN_URL}").status_code == 200
+
+
+@pytest.mark.django_db
 def test_successful_logins_arent_recorded(client, staff):
     assert log_in(client, PASSWORD).status_code == LOGGED_IN
     assert AccessLog.objects.count() == 0
