@@ -186,7 +186,7 @@ docker run --rm -v "$PWD:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b
 ```
 
 The **every file** scan also reads files git ignores, such as your local `.env` and
-`.venv/`. A finding there isn't a committed secret (`.env` is never committed); the
+`.venv/`. A finding there isn't a committed secret (`.env` files are never committed); the
 **whole history** scan shows what was actually committed.
 
 If gitleaks blocks a commit, remove the secret instead of skipping the check
@@ -238,6 +238,7 @@ uv run pytest --cov
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
+| `tests/test_ignore_files.py` | Fails if git or Docker would pick up a `.env` file (`.env`, `.env.local`, ...), or would skip `.env.example` |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
 | `Dockerfile` | The production image: uv, non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, logs to stdout |
@@ -245,6 +246,7 @@ uv run pytest --cov
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.pre-commit-config.yaml` | The checks run on every commit: gitleaks, ruff |
 | `.env.example` | Every environment variable, documented |
+| `.gitignore`, `.dockerignore` | Files kept out of git and out of the image, including every `.env` file except `.env.example` |
 | `.copier-answers.yml` | Lets `copier update` find the template; don't edit |
 
 ## Conventions
