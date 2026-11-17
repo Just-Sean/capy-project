@@ -13,6 +13,7 @@ from .environment import BASE_DIR, IS_DEVELOPMENT, IS_PRODUCTION, IS_TEST, env
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"  # where collectstatic gathers files
+STATICFILES_DIRS = [BASE_DIR / "static"]  # the site's own files, used by base.html
 MEDIA_URL = "media/"  # private uploads' addresses: config/uploads.py checks each request
 MEDIA_ROOT = BASE_DIR / "media"  # private uploads, when they're stored locally
 PUBLIC_MEDIA_URL = "/media-public/"  # public uploads: served to anyone
