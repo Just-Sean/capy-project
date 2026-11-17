@@ -307,7 +307,8 @@ work with the code already running (add things first, remove them in a later rel
 The app restarts with the new code, so for a few seconds requests wait (Caddy retries
 for up to 10) or get the error page. Before a deploy that changes the database, take a
 backup (see [Backups](#backups)). After each deploy that works, tag it, so you can find
-it again: `git tag deploy-$(date +%F-%H%M)`.
+it again: `git tag deploy-$(date +%F-%H%M)`. The tags exist only in the server's copy of
+the project (push them, `git push origin --tags`, to keep them if the server is replaced).
 
 **Rolling back** a deploy that went wrong: put the last version that worked back first,
 then fix the problem calmly. On the server, from the project folder:
@@ -386,7 +387,7 @@ docker compose -f compose.yaml -f compose.prod.yaml restart worker   # then rest
   holds up every visitor): in `.env.production` with Docker Compose, or `Environment=`
   in a systemd service. Each worker checking a login at the same moment uses about
   100 MB (Argon2). Everything in production together (Postgres, Redis, the app, the job
-  worker, Caddy) needs about 1 GB, so on a server with less than 2 GB of memory either
+  worker, Caddy) needs roughly 1 GB (an estimate: check yours with `docker stats`), so on a server with less than 2 GB of memory either
   add swap or set `WEB_CONCURRENCY=1`, or the system may stop Postgres when it runs out.
 - **Timeouts and worker recycling:** edit `gunicorn.conf.py`.
 - **Where it listens:** in Docker, on port 8000 of the container (set by the
@@ -763,18 +764,28 @@ Once, make a backup folder outside the project that only you can read:
 sudo install -d -m 700 -o "$USER" /var/backups/{{ project_slug }}
 ```
 
-Then, from the project folder on the server:
+Then, from the project folder on the server, run this whole block (the parentheses keep
+its settings, such as `umask`, from staying on in your shell afterwards, where they'd
+make files from a later `git pull` unreadable to the app):
 
 ```bash
-umask 077                                  # new files: readable only by you
+(
+umask 077                                         # new files: readable only by you
 D=$(date +%F); B=/var/backups/{{ project_slug }}  # today's date, and the backup folder
-# The database, as one file, while the site runs. Written to a .tmp file first, so a
-# failed dump never leaves a file that looks like a backup.
+# Each file is written as .tmp first and renamed once complete, so a step that fails
+# never leaves a file that looks like a backup.
+# The database, as one file, while the site runs.
 docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$B/db-$D.dump.tmp" && mv "$B/db-$D.dump.tmp" "$B/db-$D.dump"
 # The uploads, private and public, packed as you (so the files are yours, readable only by you).
-docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz -C /data ."
-docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz -C /data ."
+docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz.tmp -C /data . && mv /backup/media-$D.tar.gz.tmp /backup/media-$D.tar.gz"
+docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz.tmp -C /data . && mv /backup/media-public-$D.tar.gz.tmp /backup/media-public-$D.tar.gz"
+)
 ```
+
+The uploads are packed as you, so they must be readable by other users, as Django
+saves them by default (`FILE_UPLOAD_PERMISSIONS`, 644). If your project makes uploads
+readable only by the app, pack them as root instead (drop `--user ...`) and give the
+archive to yourself with `chown` in the same `sh -c`.
 
 Run them every night with cron, as the user that owns the backup folder. That user must
 be able to run `docker` (be in the `docker` group, which is as powerful as root, so
@@ -784,12 +795,15 @@ line**:
 
 ```
 PATH=/usr/local/bin:/usr/bin:/bin
-0 2 * * * cd /path/to/project && umask 077 && D=$(date +\%F) && B=/var/backups/{{ project_slug }} && docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$B/db-$D.dump.tmp" && mv "$B/db-$D.dump.tmp" "$B/db-$D.dump" && docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz -C /data ." && docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz -C /data ." && find "$B" -type f -mtime +14 -delete
+0 2 * * * cd /path/to/project && umask 077 && D=$(date +\%F) && B=/var/backups/{{ project_slug }} && V={{ project_slug }}-production && docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$B/db-$D.dump.tmp" && mv "$B/db-$D.dump.tmp" "$B/db-$D.dump" && docker run --rm --user "$(id -u):$(id -g)" -v "$V"_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz.tmp -C /data . && mv /backup/media-$D.tar.gz.tmp /backup/media-$D.tar.gz" && docker run --rm --user "$(id -u):$(id -g)" -v "$V"_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz.tmp -C /data . && mv /backup/media-public-$D.tar.gz.tmp /backup/media-public-$D.tar.gz" && find "$B" -type f \( -name 'db-*' -o -name 'media-*' \) -mtime +13 -delete
 ```
 
 It's the commands above, run at 2:00 each night (the job clean-up runs at 3:00), plus a
-last step that deletes backups older than 14 days, so they never fill the disk the
-database needs. Things that differ from typing them yourself, and matter:
+last step that deletes backups 14 days old or older, so they never fill the disk the
+database needs. It only deletes the backup files (`db-*` and `media-*`): keep anything
+else you store in that folder, such as copies of the `.env` files, under other names
+(better still, keep those in a password manager, not on the server). Things that differ
+from typing the commands yourself, and matter:
 
 - Cron reads a plain `%` as the end of the command, so the date is written `\%` (with
   a plain `%` the line silently does nothing).
@@ -815,6 +829,8 @@ docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore
 docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker run --rm -v {{ project_slug }}-production_media_public:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
+# The cache may hold things from before the restore: empty it (nobody is logged out).
+docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py shell -c "from django.core.cache import cache; cache.clear()"
 ```
 
 The database is restored as one transaction: if anything goes wrong, the restore stops
@@ -1092,6 +1108,7 @@ goes through `django.core.mail` (see Email).
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
+| `tests/test_dockerfile.py` | Proves the image's build stage installs `git` before `uv sync`, the runtime stage installs nothing, and the Dockerfile has no build arguments (they'd keep secrets in the image's history) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |
 | `tests/test_caddy.py` | Builds production's Caddy image and runs it with `deploy/Caddyfile`, locked down as in production, and proves it runs as its own user, the config is valid, too many requests or form posts from one address get a 429 (while pages still load after the post limit), the health checks are hidden, public uploads are downloads that can't run scripts, folders are never listed, a private upload is never served by its path but is sent (as a download, with the app's cookies) once the app names it, and only for `/media/` addresses, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
@@ -1103,7 +1120,7 @@ goes through `django.core.mail` (see Email).
 | `tests/test_logs.py` | Proves log lines are one JSON object each in production (stack traces and line breaks included, request query strings left out) and readable text in development, errors are logged once with their stack trace and never emailed, and Gunicorn can set up the same JSON logs without query strings |
 | `tests/test_csp_report.py` | Proves a CSP report is logged as a short summary without query strings, samples or fake extra lines, and that huge reports, things that aren't reports and GETs are refused |
 | `tests/test_gunicorn_config.py` | Proves `gunicorn.conf.py` uses only real Gunicorn settings with valid values |
-| `Dockerfile` | The production image: uv, non-root user, Gunicorn |
+| `Dockerfile` | The production image: uv (with `git` in the build stage only, for apps from a Git repository), non-root user, Gunicorn |
 | `gunicorn.conf.py` | Gunicorn's settings: workers, timeouts, worker recycling, JSON logs to stdout and stderr |
 | `compose.yaml` | What every environment shares: Postgres 18 and Redis 8 (the cache), with their health checks |
 | `compose.override.yaml` | Development, loaded automatically: the dev login and the Postgres and Redis ports |

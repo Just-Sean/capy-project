@@ -5,10 +5,11 @@ The full build is checked by building it (`docker compose ... up --build`); thes
 read the Dockerfile so a change to its stages can't quietly undo either part."""
 
 import re
+from pathlib import Path
 
-from tests.test_production_settings import PROJECT_DIR
-
+PROJECT_DIR = Path(__file__).resolve().parent.parent
 STAGE = re.compile(r"^FROM\s+\S+\s+AS\s+(\S+)", re.IGNORECASE)
+GIT_INSTALL = re.compile(r"apt-get install\b.*\bgit\b")
 # Anything that installs software: apt or apk packages, pip, or downloads.
 INSTALLS = re.compile(r"\b(apt-get|apt|apk|pip|curl|wget|git)\b")
 BUILD_ARGUMENT = re.compile(r"^ARG\b", re.IGNORECASE)
@@ -35,10 +36,12 @@ def stages():
 
 
 def test_the_build_stage_has_git_for_apps_from_a_git_repository():
-    build = "\n".join(stages()["build"])
-    assert "apt-get install -y --no-install-recommends git" in build
+    build = stages()["build"]
+    installs_git = [i for i, line in enumerate(build) if GIT_INSTALL.search(line)]
+    syncs = [i for i, line in enumerate(build) if "uv sync" in line]
+    assert installs_git and syncs
     # git is installed before the dependencies it's needed for.
-    assert build.index("install -y --no-install-recommends git") < build.index("uv sync")
+    assert installs_git[0] < syncs[0]
 
 
 def test_the_runtime_image_installs_nothing():
