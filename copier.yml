@@ -10,6 +10,10 @@ project_name:
   type: str
   help: Human-readable project name
   default: My Project
+  validator: >-
+    {% if project_name | regex_search('[\x00-\x1f\x7f]') %}
+    Use a name without tabs, line breaks or other control characters.
+    {% endif %}
 
 project_slug:
   type: str
@@ -18,7 +22,7 @@ project_slug:
   validator: >-
     {% if not (project_slug | regex_search('^[a-z][a-z0-9_]*$')) %}
     Use lowercase letters, digits and underscores, starting with a letter.
-    {% elif project_slug | length > 50 %}
-    Use at most 50 characters: it's also the database name, and Postgres allows 63
-    (the tests' database adds test_ in front).
+    {% elif project_slug | length > 48 %}
+    Use at most 48 characters: it's also the database name, and Postgres allows 63
+    (the tests' database adds test_ in front, a restore's copy _before_restore after).
     {% endif %}

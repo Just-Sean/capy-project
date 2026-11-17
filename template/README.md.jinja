@@ -200,7 +200,7 @@ Settings and secrets come from four files next to it, which git and the image al
 | File | Read by | Holds |
 | --- | --- | --- |
 | `.env.production` | the app, the worker and `migrate` | The production settings you need from `.env.example`: at least `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, `DJANGO_ADMIN_URL`, `DATABASE_URL` and `CACHE_URL` (`redis://app:PASSWORD@redis:6379/0`). If the app sends email (password resets included), also `EMAIL_URL` and `DJANGO_DEFAULT_FROM_EMAIL`: see [Email](#email). Never copy `.env.example` itself: it sets `DJANGO_ENV=development`. Leave `DJANGO_ENV` and `DJANGO_DEBUG` out (unset means production). |
-| `.env.postgres` | Postgres | The database login: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`. The password must match the one in `DATABASE_URL`. |
+| `.env.postgres` | Postgres | Two logins and the database's name. `POSTGRES_USER` and `POSTGRES_PASSWORD`: the database's superuser, used **only** for backups and restores. `APP_DB_USER` and `APP_DB_PASSWORD`: the app's own login (not a superuser, see [Security](#security)), made by `deploy/postgres-app-user.sh` when the database is first created; `DATABASE_URL` uses this one, so its name and password must match. `POSTGRES_DB`: the database. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 | `.env.caddy` | Caddy | `SITE_ADDRESS`, the site's domain (e.g. `example.com`, or `example.com, www.example.com` for both), which Caddy gets the certificate for. Not a secret. |
 
@@ -210,32 +210,42 @@ a random secret key; the files are created readable only by you:
 ```bash
 (
   umask 077                                    # new files: only you can read them
-  PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  ADMIN_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  APP_DB_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
   SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
   REDIS_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
   echo "REDIS_PASSWORD=$REDIS_PASSWORD" > .env.redis
   echo "SITE_ADDRESS=localhost" > .env.caddy   # needed to start; compose.local-http.yaml replaces it
   cat > .env.postgres <<EOF
-POSTGRES_USER=app
-POSTGRES_PASSWORD=$PASSWORD
+POSTGRES_USER=admin
+POSTGRES_PASSWORD=$ADMIN_PASSWORD
 POSTGRES_DB={{ project_slug }}
+APP_DB_USER=app
+APP_DB_PASSWORD=$APP_DB_PASSWORD
 EOF
   cat > .env.production <<EOF
 DJANGO_SECRET_KEY=$SECRET_KEY
 DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
 DJANGO_ADMIN_URL=staff/
-DATABASE_URL=postgres://app:$PASSWORD@db:5432/{{ project_slug }}
+DATABASE_URL=postgres://app:$APP_DB_PASSWORD@db:5432/{{ project_slug }}
 CACHE_URL=redis://app:$REDIS_PASSWORD@redis:6379/0
 EOF
 )
 ```
 
-Postgres only uses that password when it first creates the production database. If
+Postgres only uses those logins when it first creates the production database. If
 you make the files again later on your machine, delete that database first (all its
 data is lost), with production stopped:
 `docker volume rm {{ project_slug }}-production_pgdata`. (`down -v` would also delete
 the uploads and Caddy's certificates; never run it on a server unless you mean to
 start over.)
+
+**If the very first start fails** because `APP_DB_USER` or `APP_DB_PASSWORD` is missing
+from `.env.postgres` (the database's log says so), Postgres has already made its data
+without the app's login, and starting again won't add it. On a new install, with
+nothing in it yet: stop production, delete that half-made database
+(`docker volume rm {{ project_slug }}-production_pgdata`), fix `.env.postgres`, and
+start again.
 
 Stop `runserver` first, because both use port 8000. On your machine the site runs over
 plain HTTP, so `compose.local-http.yaml` switches the HTTPS settings off and has Caddy
@@ -850,8 +860,10 @@ that points to an older one, which is exactly when you roll back.)
 docker compose -f compose.yaml -f compose.prod.yaml stop web worker
 # 1. Into a new, empty database. If this fails, nothing else has changed: delete it
 #    (dropdb -U "$POSTGRES_USER" restoring, inside the db container), fix the cause, retry.
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'createdb -U "$POSTGRES_USER" restoring && pg_restore -U "$POSTGRES_USER" -d restoring --no-owner --single-transaction --exit-on-error' < /var/backups/{{ project_slug }}/db-DATE.dump
-# 2. Only if step 1 worked: swap it in, both renames together or neither.
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'createdb -U "$POSTGRES_USER" -O "$APP_DB_USER" restoring && pg_restore -U "$APP_DB_USER" -d restoring --no-owner --single-transaction --exit-on-error' < /var/backups/{{ project_slug }}/db-DATE.dump
+# 2. Only if step 1 worked: swap it in, both renames together or neither. If it says
+#    the database "is being accessed by other users", nothing changed: wait a minute
+#    and run it again (the database's health check and the nightly jobs connect briefly).
 docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 --single-transaction -c "ALTER DATABASE \"$POSTGRES_DB\" RENAME TO \"${POSTGRES_DB}_before_restore\"" -c "ALTER DATABASE restoring RENAME TO \"$POSTGRES_DB\""'
 # The uploads.
 docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
@@ -860,6 +872,10 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
 # The cache may hold things from before the restore: empty it (nobody is logged out).
 docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py shell -c "from django.core.cache import cache; cache.clear()"
 ```
+
+The backup is restored as the app's own login, never as the superuser: a backup holds
+whatever the app put in the database, and restoring it with superuser rights could
+let anything planted there act as the superuser.
 
 Once the site works, delete the previous database to free its space (if it's still
 there from an earlier restore, step 2 stops with an error until you do):
@@ -891,6 +907,24 @@ Passwords and login rate limiting are set in `config/settings/users.py`; HTTPS, 
 headers and the CSP in `config/settings/security.py`. They apply to every environment
 unless noted.
 
+- **The database login:** in production the app, the job worker and `migrate` log in
+  to Postgres as `APP_DB_USER`, which owns the project's database but is **not a
+  superuser** and can't create databases or logins. So even an SQL-injection bug in a
+  project could only reach the project's own data, not run commands on the database
+  server, read its files or make logins. The superuser (`POSTGRES_USER`) is only for
+  backups and restores (the commands in [Backups](#backups) use it); never put it in
+  `DATABASE_URL`. Development keeps one simple login (`app`/`app`), on this machine only.
+
+  For anything you do by hand in the project's database, log in as the app's login too
+  (`psql -U "$APP_DB_USER"` inside the db container), not the superuser. An **extension**
+  that only a superuser may add (PostGIS, for example; ones marked "trusted", such as
+  `pg_trgm`, `citext` or `unaccent`, the app's login adds itself in a migration) is added
+  once by hand, as the superuser, before the migration that needs it runs:
+  `docker compose -f compose.yaml -f compose.prod.yaml exec db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "CREATE EXTENSION IF NOT EXISTS postgis"'`.
+  A restore then needs it added to the new `restoring` database the same way, between
+  `createdb` and `pg_restore` in step 1; if the restore then stops with "must be owner
+  of extension" (the backup repeats the extension's description), add `--no-comments`
+  to `pg_restore` (it also leaves out comments on tables and columns, if you set any).
 - **Passwords** are hashed with Argon2 (tests use a fast hasher instead). Passwords saved
   with an older hasher still work, and are re-hashed with Argon2 the next time that user
   logs in. Each login check uses about 100 MB of memory for a moment, which matters
@@ -1144,6 +1178,7 @@ goes through `django.core.mail` (see Email).
 | `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value, or a worker count other than `gunicorn.conf.py`'s default |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_dockerfile.py` | Proves the image's build stage installs `git` before `uv sync`, the runtime stage installs nothing, and the Dockerfile has no build arguments (they'd keep secrets in the image's history) |
+| `tests/test_postgres_logins.py` | Starts a real Postgres with `deploy/postgres-app-user.sh` and proves the app's login isn't a superuser, owns the database, can't create logins or databases, run programs or read server files, keeps a password with quotes and SQL in it as it is, that Postgres won't set up without it, and that the upgrade for an older database hands everything to the new login and changes the superuser's password |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |
 | `tests/test_caddy.py` | Builds production's Caddy image and runs it with `deploy/Caddyfile`, locked down as in production, and proves it runs as its own user, the config is valid, too many requests or form posts from one address get a 429 (while pages still load after the post limit), the health checks are hidden, public uploads are downloads that can't run scripts, folders are never listed, a private upload is never served by its path but is sent (as a download, with the app's cookies) once the app names it, and only for `/media/` addresses, requests over 10 MB are refused, and with the app down visitors get the site's page with the real status and no header naming Caddy |
 | `tests/test_security_headers.py` | Proves pages, error pages and static files send the security headers and exactly the strict CSP with a fresh nonce, the admin has nothing the CSP would block, development only reports it, passwords use Argon2 (older hashes still work and get upgraded), and production sends HSTS over HTTPS without preloading |
@@ -1162,6 +1197,8 @@ goes through `django.core.mail` (see Email).
 | `compose.prod.yaml` | Production: Postgres, Redis, the `migrate` step, the app, the job worker and Caddy, with settings and secrets from `.env.production`, `.env.postgres`, `.env.redis` and `.env.caddy`, and at most 50 MB of logs per container |
 | `compose.local-http.yaml` | Only for running production on your machine over plain HTTP: switches the HTTPS settings off and has Caddy answer on `localhost:8000` without a certificate. Never on a server |
 | `deploy/caddy.Dockerfile` | Production's Caddy image: the official one plus the rate-limit plugin, running as its own non-root user |
+| `deploy/postgres-app-user.sh` | Run once by Postgres when production's database is first created: makes the app's own login, not a superuser (see Security) |
+| `deploy/postgres-app-user-upgrade.sql` | Run once by hand on a production database made before the starter's v1.0.0: gives the app the same login, and the superuser a new password (see the starter's README) |
 | `deploy/Caddyfile` | Caddy's settings: HTTPS, rate limits, forwarding to the app, the request size limit, public uploads, sending private uploads the app allowed, all as downloads, the proxy error page, hiding the health checks, its request log |
 | `pyproject.toml`, `uv.lock` | Dependencies and tool settings (pytest, Ruff, coverage) |
 | `.github/dependabot.yml` | Dependabot's weekly check for newer Python packages, base images and the compose files' images (security fixes included), each as a pull request |
