@@ -239,6 +239,13 @@ hand. Changes so far that need this:
     can read, the upload archives too, and the restore runs as one transaction.
   - That head block comes before `base.html`'s `color-scheme` tag, so a theme can set
     its own (browsers use the first).
+- **Page structure (skip link, header and footer):** `templates/base.html` now starts
+  the page with a "Skip to the main content" link, has `header` and `footer` blocks
+  outside `<main>`, and loads the new `static/site.css` (listed in `STATICFILES_DIRS`
+  in `config/settings/files.py`). If your project edited `base.html`, keep your changes
+  and add these parts; if it already has a root `static/` folder or its own
+  `STATICFILES_DIRS`, keep both. Move a nav bar that a layout put inside the `content`
+  block into the `header` block, so it's no longer inside `<main>`.
 - **Postgres image:** projects made before the compose split used the pgvector image.
   The official Postgres image doesn't include pgvector, so a project that uses it must
   switch its image back in `compose.yaml`.

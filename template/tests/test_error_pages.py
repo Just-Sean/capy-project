@@ -43,10 +43,16 @@ urlpatterns = [
 ]
 
 # A real crash in a request, through every middleware, in production, with nothing
-# listening where the database and Redis should be.
+# listening where the database and Redis should be. Static files use plain storage here:
+# production's compressed storage needs the list of files `collectstatic` makes, which
+# the image always has but this process doesn't, and looking up a static file never
+# touches the database or Redis.
 CRASH_WITH_NOTHING_UP = (
+    "from django.conf import settings\n"
     "from django.test import Client, override_settings\n"
-    "with override_settings(ROOT_URLCONF='tests.test_error_pages'):\n"
+    "storages = {**settings.STORAGES, 'staticfiles': "
+    "{'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}}\n"
+    "with override_settings(ROOT_URLCONF='tests.test_error_pages', STORAGES=storages):\n"
     "    response = Client(raise_request_exception=False).get('/crash/', secure=True,"
     " headers={'host': 'example.com'})\n"
     "print(response.status_code, '<h1>Something went wrong</h1>' in response.content.decode())\n"
@@ -138,7 +144,9 @@ def test_a_page_adds_to_its_layouts_head_with_block_super(tmp_path):
         '{% extends "layout.html" %}{% block title %}Map{% endblock %}'
         '{% block head %}{{ block.super }}<script src="/map.js" defer></script>{% endblock %}'
     )
-    engine = Engine(dirs=[TEMPLATES_DIR, tmp_path])
+    engine = Engine(
+        dirs=[TEMPLATES_DIR, tmp_path], libraries={"static": "django.templatetags.static"}
+    )
     head = engine.get_template("page.html").render(Context()).split("</head>")[0]
     assert head.index("/theme.css") < head.index("/map.js")
     assert "<title>Map</title>" in head
@@ -152,6 +160,43 @@ def test_a_themes_color_scheme_comes_before_the_default():
     )
     html = page.render(Context())
     assert html.index('content="light">') < html.index('content="light dark">')
+
+
+LAYOUT = (
+    '{% extends "base.html" %}'
+    "{% block header %}<header><nav>Site menu</nav></header>{% endblock %}"
+    "{% block content %}<h1>Page</h1>{% endblock %}"
+    "{% block footer %}<footer>Contact</footer>{% endblock %}"
+)
+
+
+def test_header_and_footer_are_landmarks_of_their_own():
+    # A layout's nav and footer stay outside <main>, so screen readers list a header,
+    # the main content and a footer, rather than one <main> holding everything.
+    html = Template(LAYOUT).render(Context())
+    main = html[html.index("<main") : html.index("</main>")]
+    assert "<h1>Page</h1>" in main
+    assert "Site menu" not in main and "Contact" not in main
+    assert html.index("Site menu") < html.index("<main") < html.index("</main>")
+    assert html.index("</main>") < html.index("Contact")
+
+
+def test_the_skip_link_comes_first_and_leads_to_the_main_content():
+    html = Template(LAYOUT).render(Context())
+    body = html[html.index("<body>") :]
+    first_link = body[body.index("<a") : body.index("</a>")]
+    assert 'href="#main"' in first_link and "Skip to the main content" in first_link
+    assert body.index("Skip to the main content") < body.index("Site menu")
+    assert '<main id="main">' in html
+
+
+def test_every_page_loads_the_sites_stylesheet(visitor):
+    # It hides the skip link until it's focused; without it the link would always show.
+    html = render_to_string("404.html")
+    assert '<link rel="stylesheet" href="/static/site.css">' in html
+    response = visitor.get("/static/site.css")
+    assert response.status_code == 200
+    assert b".skip-link:focus" in b"".join(response.streaming_content)
 
 
 @pytest.mark.parametrize("page", sorted(TEMPLATES_DIR.glob("*.html")), ids=lambda p: p.name)

@@ -1,0 +1,25 @@
+/* The site's own styles, loaded by templates/base.html on every page. Kept minimal:
+   pages use the browser's own styles until a project adds its own CSS or a theme app.
+   Styles live in files like this one, never in style="" attributes or <style> tags
+   without a nonce: the Content Security Policy blocks those. */
+
+/* "Skip to the main content": the first thing keyboard and screen-reader users reach.
+   Off screen until it has keyboard focus (not display: none, which would hide it from
+   screen readers too), then shown at the top left in the page's own colors. */
+.skip-link {
+  position: absolute;
+  left: -100vw;
+  top: 0;
+}
+
+.skip-link:focus {
+  left: 1rem;
+  top: 1rem;
+  z-index: 1000;
+  padding: 0.75rem 1rem;
+  background: Canvas;
+  color: CanvasText;
+  border: 2px solid CanvasText;
+  outline: 3px solid Highlight;
+  outline-offset: 2px;
+}
