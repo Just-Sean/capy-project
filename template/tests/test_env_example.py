@@ -209,6 +209,19 @@ def test_true_false_values_are_words_django_environ_knows():
     assert wrong == [], f"Use true or false for these in .env.example: {wrong}"
 
 
+def test_the_worker_count_shown_is_gunicorns_default():
+    # .env.example shows WEB_CONCURRENCY commented out at its default, so it must say
+    # what gunicorn.conf.py really uses when the variable isn't set.
+    config = (PROJECT_DIR / "gunicorn.conf.py").read_text()
+    found = re.search(r"""WEB_CONCURRENCY["'],\s*["'](\d+)["']""", config)
+    assert found, (
+        "gunicorn.conf.py no longer reads WEB_CONCURRENCY with a default: update this test"
+    )
+    default = found.group(1)
+    assert values_in(env_example())["WEB_CONCURRENCY"] == default
+    assert f"Default {default}." in env_example()
+
+
 # --- The helpers themselves ------------------------------------------------------
 
 

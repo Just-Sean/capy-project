@@ -5,7 +5,7 @@
 **What's in it:**
 
 - **What every project gets:** a short list covering the database, cache, settings, security, uploads, email, jobs, error pages, health checks, logs, Docker and Caddy, and the checks.
-- **Make a new project:** install Copier, then run `copier copy --vcs-ref=HEAD`.
+- **Make a new project:** install Copier, then run `copier copy gh:Just-Sean/django-starter` (the newest release; `--vcs-ref=HEAD` is only for trying unreleased changes, see Working on the starter).
 - **Update an existing project:** commit, then run `copier update`, and tag starter releases. Then comes the long part: **one note per change that needs a hand step** in projects made before it. Examples:
   - adding `CACHE_URL` for Redis
   - running `migrate` for django-axes
