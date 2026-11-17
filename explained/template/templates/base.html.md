@@ -2,7 +2,7 @@
 
 **What it is:** the base page for the site's own pages. The error pages extend it, and a project's pages can too. It's plain HTML with the browser's own styles, in **light or dark to match the visitor** (`<meta name="color-scheme" content="light dark">`). Restyle it with your own CSS or a theme app.
 
-**Structure:** a "Skip to the main content" link first (hidden by `static/site.css` until it's focused), then the `header` block, `<main id="main">` with the `content` block, and the `footer` block. So a site's header, nav and footer are landmarks of their own, outside `<main>`, and keyboard users can jump past the nav. It loads `static/site.css` on every page.
+**Structure:** a "Skip to the main content" link first (hidden by `static/site.css` until it's focused), then the `header` block, `<main id="main" tabindex="-1">` (so focus moves there reliably, iOS included) with the `content` block, and the `footer` block. So a site's header, nav and footer are landmarks of their own, outside `<main>`, and keyboard users can jump past the nav. It loads `static/site.css` on every page.
 
 **Blocks:** `header` and `footer` (empty, outside `<main>`), `title` (default "Untitled page"), `head` (empty, inside `<head>` after the viewport tag: for stylesheets, meta tags and scripts; it comes before the default `color-scheme` tag, so a theme's own wins, since browsers use the first) and `content`, inside `<main>`.
 

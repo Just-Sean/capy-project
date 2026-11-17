@@ -668,16 +668,19 @@ have the rest of your pages extend that.
 landmarks: a **"Skip to the main content"** link first (hidden until someone reaches
 it with the Tab key, so keyboard users can jump past the nav), then the `header`
 block, `<main id="main">` with the `content` block, and the `footer` block. Put the
-site's header and nav in `header`, its footer in `footer`, never inside `content`:
+site's header and nav in `header`, its footer in `footer`, never inside `content`, and
+don't add another `<main>` in `content` (a page has exactly one):
 
 ```html
 {% raw %}{% extends "base.html" %}
-{% block header %}<header><nav aria-label="Main">...</nav></header>{% endblock %}
+{% block header %}<header><nav aria-label="Primary">...</nav></header>{% endblock %}
 {% block footer %}<footer>...</footer>{% endblock %}{% endraw %}
 ```
 
 The skip link is styled by `static/site.css`, the site's own stylesheet, which
-`base.html` loads on every page. Stylesheets, meta tags and scripts go inside `<head>`
+`base.html` loads on every page. If your header sticks to the top of the screen
+(`position: sticky` or `fixed`), keep the skip link above it (a higher `z-index` than
+the header's), so it's never hidden when it's reached. Stylesheets, meta tags and scripts go inside `<head>`
 through `{% raw %}{% block head %}{% endraw %}`: fill it in that layout page, not in
 `base.html`, so the 500 page (which uses the bare `base.html`) never depends on them. A
 page that extends your layout and adds its own `<head>` tags must start its block with

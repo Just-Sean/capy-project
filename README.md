@@ -225,7 +225,9 @@ hand. Changes so far that need this:
   - `Dockerfile` installs `git` in its build stage. If your project changed the
     Dockerfile, `copier update` shows a conflict there: keep both changes.
   - `templates/base.html` has a new `{% block head %}`. If your project edited
-    `base.html`, keep your changes and add the block right after the viewport tag.
+    `base.html`, keep your changes and add the block; the `<head>` order is: charset,
+    viewport, the `site.css` link (from the page-structure update below), the head
+    block, the `color-scheme` tag, then the title.
   - The Content Security Policy now allows `data:` images (`img-src`). If your project
     replaced `SECURE_CSP` in `config/settings/security.py`, add `"data:"` to its
     `img-src` yourself if you use a CSS framework such as daisyUI or Tailwind.
@@ -237,8 +239,8 @@ hand. Changes so far that need this:
     crontab, replace them with that line (a plain `%` in a crontab silently breaks the
     command, so those backups never ran). The backup commands now write files only you
     can read, the upload archives too, and the restore runs as one transaction.
-  - That head block comes before `base.html`'s `color-scheme` tag, so a theme can set
-    its own (browsers use the first).
+  - That head block must stay before `base.html`'s `color-scheme` tag, so a theme can
+    set its own (browsers use the first).
 - **Page structure (skip link, header and footer):** `templates/base.html` now starts
   the page with a "Skip to the main content" link, has `header` and `footer` blocks
   outside `<main>`, and loads the new `static/site.css` (listed in `STATICFILES_DIRS`

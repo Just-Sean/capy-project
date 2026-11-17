@@ -43,19 +43,23 @@ urlpatterns = [
 ]
 
 # A real crash in a request, through every middleware, in production, with nothing
-# listening where the database and Redis should be. Static files use plain storage here:
-# production's compressed storage needs the list of files `collectstatic` makes, which
-# the image always has but this process doesn't, and looking up a static file never
-# touches the database or Redis.
+# listening where the database and Redis should be. As in the image, `collectstatic` runs
+# first (into a temporary folder), so the page uses production's compressed,
+# cache-busting static files: it prints the status, whether the 500 page showed, and
+# whether it linked the site's stylesheet by its hashed name.
 CRASH_WITH_NOTHING_UP = (
-    "from django.conf import settings\n"
+    "import re, tempfile\n"
+    "from django.core.management import call_command\n"
     "from django.test import Client, override_settings\n"
-    "storages = {**settings.STORAGES, 'staticfiles': "
-    "{'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}}\n"
-    "with override_settings(ROOT_URLCONF='tests.test_error_pages', STORAGES=storages):\n"
+    "with tempfile.TemporaryDirectory() as static_root, override_settings(\n"
+    "    ROOT_URLCONF='tests.test_error_pages', STATIC_ROOT=static_root\n"
+    "):\n"
+    "    call_command('collectstatic', interactive=False, verbosity=0)\n"
     "    response = Client(raise_request_exception=False).get('/crash/', secure=True,"
     " headers={'host': 'example.com'})\n"
-    "print(response.status_code, '<h1>Something went wrong</h1>' in response.content.decode())\n"
+    "html = response.content.decode()\n"
+    "print(response.status_code, '<h1>Something went wrong</h1>' in html,"
+    " bool(re.search(r'/static/site[.][0-9a-f]{12}[.]css', html)))\n"
 )
 
 
@@ -111,7 +115,7 @@ def test_the_500_page_works_with_the_database_and_redis_down():
         DATABASE_URL="postgres://user:pass@127.0.0.1:1/db",
         CACHE_URL="redis://app:pass@127.0.0.1:1/0",
     )
-    assert last_line(result) == "500 True", result.stderr
+    assert last_line(result) == "500 True True", result.stderr
     assert "hunter2" not in result.stdout
 
 
@@ -187,7 +191,7 @@ def test_the_skip_link_comes_first_and_leads_to_the_main_content():
     first_link = body[body.index("<a") : body.index("</a>")]
     assert 'href="#main"' in first_link and "Skip to the main content" in first_link
     assert body.index("Skip to the main content") < body.index("Site menu")
-    assert '<main id="main">' in html
+    assert '<main id="main" tabindex="-1">' in html
 
 
 def test_every_page_loads_the_sites_stylesheet(visitor):
@@ -199,7 +203,24 @@ def test_every_page_loads_the_sites_stylesheet(visitor):
     assert b".skip-link:focus" in b"".join(response.streaming_content)
 
 
-@pytest.mark.parametrize("page", sorted(TEMPLATES_DIR.glob("*.html")), ids=lambda p: p.name)
+@pytest.mark.urls(__name__)
+@pytest.mark.parametrize("url", ["/bad/", "/forbidden/", "/no-such-page/", "/crash/"])
+def test_every_error_page_has_the_page_structure(visitor, url):
+    html = visitor.get(url).content.decode()
+    assert html.count("<main") == 1 and '<main id="main" tabindex="-1">' in html
+    assert html.index('href="#main"') < html.index("<main")
+    assert '<link rel="stylesheet" href="/static/site.css">' in html
+
+
+def test_a_page_without_header_or_footer_has_no_empty_landmarks():
+    html = render_to_string("404.html")
+    for landmark in ("<header", "<footer", "<nav"):
+        assert landmark not in html
+
+
+@pytest.mark.parametrize(
+    "page", sorted(TEMPLATES_DIR.rglob("*.html")), ids=lambda p: str(p.relative_to(TEMPLATES_DIR))
+)
 def test_no_page_has_code_the_csp_would_block(page):
     assert blocked_in(page.read_text()) == {}
 
