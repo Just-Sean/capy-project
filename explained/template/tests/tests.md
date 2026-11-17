@@ -22,7 +22,7 @@
 | `test_env_example.py` | `.env.example` lists exactly the variables the project reads |
 | `test_ignore_files.py` | Secrets stay out of git and the image |
 | `test_compose.py` | The compose files: dev stays local, production locked down |
-| `test_dockerfile.py` | The image's build stage has `git` for Git apps; the runtime image installs nothing extra |
+| `test_dockerfile.py` | The image's build stage has `git` for Git apps; the runtime image installs nothing; no build arguments |
 | `test_caddy.py` | Caddy, really running: rate limits, uploads, hidden health checks, the error page |
 | `test_gunicorn_config.py` | `gunicorn.conf.py` is valid |
 | `test_security_headers.py` | Headers, the CSP and its nonce, Argon2, HSTS |

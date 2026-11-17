@@ -837,13 +837,23 @@ may not work: try a restore on another machine now and then.
 To restore (replace `DATE` with the backup's date), stop the app and the worker so
 nothing writes meanwhile, put everything back, then start them again. On a new server,
 put the `.env` files back, make the backup folder and copy the backups into it, and
-start production once first, so the volumes exist. The
-restored uploads are given to the app's own user (10001), so it can still change and
-delete them:
+start production once first, so the volumes exist.
+
+The database is restored in two steps, so the one the site uses is never touched until
+a complete copy is ready: first the backup goes into a new, empty database named
+`restoring`; only if that fully worked, the two are swapped, and the current database
+is kept as `{{ project_slug }}_before_restore` until you've checked the site. (Restoring
+on top of the current database instead fails whenever a newer release added a table
+that points to an older one, which is exactly when you roll back.)
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml stop web worker
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --single-transaction --exit-on-error' < /var/backups/{{ project_slug }}/db-DATE.dump
+# 1. Into a new, empty database. If this fails, nothing else has changed: delete it
+#    (dropdb -U "$POSTGRES_USER" restoring, inside the db container), fix the cause, retry.
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'createdb -U "$POSTGRES_USER" restoring && pg_restore -U "$POSTGRES_USER" -d restoring --no-owner --single-transaction --exit-on-error' < /var/backups/{{ project_slug }}/db-DATE.dump
+# 2. Only if step 1 worked: swap it in, both renames together or neither.
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d postgres -v ON_ERROR_STOP=1 --single-transaction -c "ALTER DATABASE \"$POSTGRES_DB\" RENAME TO \"${POSTGRES_DB}_before_restore\"" -c "ALTER DATABASE restoring RENAME TO \"$POSTGRES_DB\""'
+# The uploads.
 docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker run --rm -v {{ project_slug }}-production_media_public:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
@@ -851,9 +861,15 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
 docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py shell -c "from django.core.cache import cache; cache.clear()"
 ```
 
-The database is restored as one transaction: if anything goes wrong, the restore stops
-with an error and the database is left exactly as it was, never half-restored, so fix
-the cause and run it again before starting the app.
+Once the site works, delete the previous database to free its space (if it's still
+there from an earlier restore, step 2 stops with an error until you do):
+
+```bash
+docker compose -f compose.yaml -f compose.prod.yaml exec db sh -c 'dropdb -U "$POSTGRES_USER" "${POSTGRES_DB}_before_restore"'
+```
+
+Unpacking the uploads adds the backup's files back; files uploaded after the backup
+was taken stay too (nothing is deleted), with no database row pointing at them.
 
 With S3 uploads, the files are in the bucket: turn on its versioning (and, on AWS, a
 backup plan) instead of the two upload commands.
@@ -947,8 +963,8 @@ unless noted.
     often browser extensions. In development they also show in the `runserver`
     terminal, including expected ones from Django's yellow error pages. Reports bigger
     than 10 KB, or not sent as `application/csp-report`, are refused. Anyone can send
-    reports, so a flood shows up in the logs until the proxy's rate limits (a coming
-    version of the starter) slow it.
+    reports, but Caddy accepts at most 120 a minute from one address (see Production),
+    so a flood can't fill the logs.
 - **HSTS preload is off on purpose.** Being on browsers' preload list is hard to undo
   (removal takes months) and covers every subdomain, so each project opts in when it's
   ready:
@@ -1125,7 +1141,7 @@ goes through `django.core.mail` (see Email).
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
 | `tests/test_deprecation_warnings.py` | Proves every Django deprecation warning (a deprecated setting included) fails the tests, both in pytest itself and in the `manage.py` processes tests start, that those processes otherwise run as `python manage.py` would, and that other libraries' deprecations don't fail the tests |
 | `tests/test_settings_package.py` | Proves every topic file is combined and its settings reach Django, no two topic files set the same setting differently, and a leftover `config/settings.py` is refused |
-| `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value |
+| `tests/test_env_example.py` | Fails if `.env.example` misses a variable read in the project's Python files (except tests, migrations and virtualenvs) or compose files, lists one nothing reads or lists one twice, has a line that isn't a plain `NAME=value` (indented, or with spaces, quotes or a comment in the value), or shows a wrong `DJANGO_ENV` or true/false value, or a worker count other than `gunicorn.conf.py`'s default |
 | `tests/test_ignore_files.py` | Fails if `.gitignore` lets a `.env` file or private key through (`.env`, `.env.local`, `config/.env`, `*.pem`, `id_rsa`, ...) or leaves out `.env.example`, or if `.dockerignore` lets any of them into the image (both checked with git's matching, plus a check that Docker's rules cover every folder) |
 | `tests/test_dockerfile.py` | Proves the image's build stage installs `git` before `uv sync`, the runtime stage installs nothing, and the Dockerfile has no build arguments (they'd keep secrets in the image's history) |
 | `tests/test_compose.py` | Proves development stays on this machine, and production takes its secrets only from the env files, migrates before the app and the worker start, runs locked down, publishes only Caddy (with the app always behind it), keeps the database and Redis internal, keeps Redis a cache only (a login, nothing on disk, a memory limit), limits every service's logs, gives Gunicorn time to stop and the worker time to finish its job, and that the Caddyfile is valid |

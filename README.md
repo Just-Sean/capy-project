@@ -40,8 +40,14 @@ Everything else (APIs, login pages, front end) is added per project.
 
 ```bash
 uv tool install copier          # once
-copier copy --vcs-ref=HEAD /path/to/django-starter my-client-app
+copier copy gh:Just-Sean/django-starter my-client-app     # the newest release
 ```
+
+Copier asks for the project's name, then makes the folder. Then follow the new
+project's README, **First-time setup**. Copier uses the newest release tag (v1.0.0 or
+later), never unfinished work, and records it, so `copier update` knows where the
+project started. (A local copy of the starter works the same:
+`copier copy /path/to/django-starter my-client-app`, as long as it has the tags.)
 
 ## Update an existing project when the starter improves
 
@@ -51,12 +57,55 @@ Commit your project first, then inside it:
 copier update
 ```
 
-Copier re-applies the starter's changes and asks about any conflicts.
-Tag starter releases (`git tag v0.2.0`) so projects update to a known version.
+Copier re-applies the starter's changes and asks about any conflicts. It moves the
+project to the newest release tag; the first stable one is **v1.0.0**. Before updating
+production, go through the notes below for every release newer than your project's
+(`_commit` in its `.copier-answers.yml` says which one it's on).
 
 `copier update` never touches a project's own secret files (`.env`, `.env.production`
 and the like: they're git-ignored). When an update adds a required setting, add it by
-hand. Changes so far that need this:
+hand. Changes that need this, newest release first:
+
+**New in v1.0.0** (updating from v0.4.0: these are all you need):
+
+- **Restoring the database:** the project README's restore steps changed. The backup
+  now goes into a new database first, and is swapped in only if that fully worked (the
+  current one is kept as `<slug>_before_restore`). The old steps restored on top of the
+  current database, which fails when a newer release added a table linked to an older
+  one. Use the new steps; delete any copy of the old ones from your own notes.
+- **v1 fixes (two workers, Git apps in the image, the head block, `data:` images,
+  development static files, cron backups, rolling back):** nothing to add by hand, but
+  check these:
+  - Gunicorn now starts **2 workers** unless `WEB_CONCURRENCY` is set. On a server with
+    less than 2 GB of memory, add swap or set `WEB_CONCURRENCY=1` in `.env.production`.
+  - `Dockerfile` installs `git` in its build stage. If your project changed the
+    Dockerfile, `copier update` shows a conflict there: keep both changes.
+  - `templates/base.html` has a new `{% block head %}`. If your project edited
+    `base.html`, keep your changes and add the block; the `<head>` order is: charset,
+    viewport, the `site.css` link (from the page-structure update below), the head
+    block, the `color-scheme` tag, then the title.
+  - The Content Security Policy now allows `data:` images (`img-src`). If your project
+    replaced `SECURE_CSP` in `config/settings/security.py`, add `"data:"` to its
+    `img-src` yourself if you use a CSS framework such as daisyUI or Tailwind.
+  - Development serves static files without `collectstatic` even with
+    `DJANGO_DEBUG=false`; production is unchanged.
+  - The project README now has a ready-made **cron line for nightly backups** (it also
+    deletes backups older than 14 days) and steps for **deploying, tagging and rolling
+    back**: if you scheduled backups yourself by copying the backup commands into a
+    crontab, replace them with that line (a plain `%` in a crontab silently breaks the
+    command, so those backups never ran). The backup commands now write files only you
+    can read, the upload archives too, and the restore runs as one transaction.
+  - That head block must stay before `base.html`'s `color-scheme` tag, so a theme can
+    set its own (browsers use the first).
+- **Page structure (skip link, header and footer):** `templates/base.html` now starts
+  the page with a "Skip to the main content" link, has `header` and `footer` blocks
+  outside `<main>`, and loads the new `static/site.css` (listed in `STATICFILES_DIRS`
+  in `config/settings/files.py`). If your project edited `base.html`, keep your changes
+  and add these parts; if it already has a root `static/` folder or its own
+  `STATICFILES_DIRS`, keep both. Move a nav bar that a layout put inside the `content`
+  block into the `header` block, so it's no longer inside `<main>`.
+
+**New in v0.4.0** (updating from v0.3.x or earlier: these too, and apply them first):
 
 - **Redis cache:** add `CACHE_URL=redis://app:app@localhost:6379/0` to `.env`, and start
   development with `docker compose up -d` (it now starts Redis too). For production,
@@ -217,37 +266,6 @@ hand. Changes so far that need this:
   repository, turn on "Dependabot alerts" and "Dependabot security updates" (Settings >
   Code security). The project README now has a Backups section: set up the nightly
   backup it describes.
-- **v1 fixes (two workers, Git apps in the image, the head block, `data:` images,
-  development static files, cron backups, rolling back):** nothing to add by hand, but
-  check these:
-  - Gunicorn now starts **2 workers** unless `WEB_CONCURRENCY` is set. On a server with
-    less than 2 GB of memory, add swap or set `WEB_CONCURRENCY=1` in `.env.production`.
-  - `Dockerfile` installs `git` in its build stage. If your project changed the
-    Dockerfile, `copier update` shows a conflict there: keep both changes.
-  - `templates/base.html` has a new `{% block head %}`. If your project edited
-    `base.html`, keep your changes and add the block; the `<head>` order is: charset,
-    viewport, the `site.css` link (from the page-structure update below), the head
-    block, the `color-scheme` tag, then the title.
-  - The Content Security Policy now allows `data:` images (`img-src`). If your project
-    replaced `SECURE_CSP` in `config/settings/security.py`, add `"data:"` to its
-    `img-src` yourself if you use a CSS framework such as daisyUI or Tailwind.
-  - Development serves static files without `collectstatic` even with
-    `DJANGO_DEBUG=false`; production is unchanged.
-  - The project README now has a ready-made **cron line for nightly backups** (it also
-    deletes backups older than 14 days) and steps for **deploying, tagging and rolling
-    back**: if you scheduled backups yourself by copying the backup commands into a
-    crontab, replace them with that line (a plain `%` in a crontab silently breaks the
-    command, so those backups never ran). The backup commands now write files only you
-    can read, the upload archives too, and the restore runs as one transaction.
-  - That head block must stay before `base.html`'s `color-scheme` tag, so a theme can
-    set its own (browsers use the first).
-- **Page structure (skip link, header and footer):** `templates/base.html` now starts
-  the page with a "Skip to the main content" link, has `header` and `footer` blocks
-  outside `<main>`, and loads the new `static/site.css` (listed in `STATICFILES_DIRS`
-  in `config/settings/files.py`). If your project edited `base.html`, keep your changes
-  and add these parts; if it already has a root `static/` folder or its own
-  `STATICFILES_DIRS`, keep both. Move a nav bar that a layout put inside the `content`
-  block into the `header` block, so it's no longer inside `<main>`.
 - **Postgres image:** projects made before the compose split used the pgvector image.
   The official Postgres image doesn't include pgvector, so a project that uses it must
   switch its image back in `compose.yaml`.
@@ -266,6 +284,14 @@ hand. Changes so far that need this:
   `copier copy --vcs-ref=HEAD` from a local checkout includes uncommitted changes, so
   any file git doesn't ignore can end up in new projects.
 - It also has its own `.pre-commit-config.yaml`, which runs gitleaks on every commit.
+- **Trying changes before a release:** `copier copy --vcs-ref=HEAD /path/to/django-starter /tmp/try-it`
+  makes a throwaway project from your working copy, uncommitted changes included. Never
+  use it for a real project: Copier records an unreleased version, and later refuses to
+  update it to the release (it counts as going backwards).
+- **Releasing:** after the release's pull request is merged, tag `main` and push only
+  the tag: `git switch main && git pull`, then `git tag vX.Y.Z` and
+  `git push origin vX.Y.Z`. Add a "New in vX.Y.Z" group to the update notes above in
+  that pull request.
 
 Set up the commit check once, after cloning:
 

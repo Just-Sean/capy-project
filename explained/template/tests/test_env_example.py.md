@@ -13,5 +13,6 @@
 - Each listed variable really loads once its line is uncommented.
 - `DJANGO_ENV` shows a real environment.
 - True/false values are words django-environ knows.
+- The worker count it shows (`WEB_CONCURRENCY`, commented out) is `gunicorn.conf.py`'s real default.
 
 **Testing its own scanners:** about half the file tests the scanners themselves, on sample text: reads they must find, look-alikes they must ignore, unusual line breaks, files that can't be read, and declared encodings. A broken scanner can't then pass silently by finding nothing.

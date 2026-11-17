@@ -1,5 +1,5 @@
 # Copier template: make a new project with
-#   copier copy gh:<you>/django-starter my-client-app
+#   copier copy gh:Just-Sean/django-starter my-client-app
 # and later pull in starter improvements from inside the project with
 #   copier update
 
@@ -18,4 +18,7 @@ project_slug:
   validator: >-
     {% if not (project_slug | regex_search('^[a-z][a-z0-9_]*$')) %}
     Use lowercase letters, digits and underscores, starting with a letter.
+    {% elif project_slug | length > 50 %}
+    Use at most 50 characters: it's also the database name, and Postgres allows 63
+    (the tests' database adds test_ in front).
     {% endif %}
