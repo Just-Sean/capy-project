@@ -168,7 +168,7 @@ def app_network(production_caddy):
         )  # fmt: skip
         yield network
     finally:
-        docker("rm", "--force", app, check=False)
+        remove(app)
         docker("network", "rm", network, check=False)
 
 

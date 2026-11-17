@@ -61,6 +61,11 @@ def start_postgres(image, superuser, *env, init_script=True):
     return name
 
 
+def remove(container):
+    """Removes a container and its unnamed volumes."""
+    docker("rm", "--force", "--volumes", container, check=False)
+
+
 def wait_until_ready(name, superuser=ADMIN):
     # Over TCP: during its first setup Postgres only answers on its local socket.
     deadline = time.monotonic() + READY_WITHIN_SECONDS
@@ -113,7 +118,7 @@ def postgres(db_service):
         wait_until_ready(name)
         yield name
     finally:
-        docker("rm", "--force", name, check=False)
+        remove(name)
 
 
 def test_the_apps_login_is_not_a_superuser(postgres):
@@ -168,7 +173,7 @@ def test_without_the_apps_login_settings_postgres_refuses_to_set_up(db_service):
         logs = docker("logs", name, check=False)
         assert "set APP_DB_USER and APP_DB_PASSWORD" in logs.stdout + logs.stderr
     finally:
-        docker("rm", "--force", name, check=False)
+        remove(name)
 
 
 # --- deploy/postgres-app-user-upgrade.sql, on a database made the old way ---------------
@@ -217,7 +222,7 @@ def old_style_database(db_service):
         assert made.returncode == 0, made.stderr
         yield name
     finally:
-        docker("rm", "--force", name, check=False)
+        remove(name)
 
 
 def upgrade(name, *env):
