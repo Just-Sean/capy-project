@@ -17,8 +17,11 @@ import os
 # Docker the Dockerfile overrides it with --bind 0.0.0.0:8000.
 bind = "127.0.0.1:8000"
 
-# Worker processes. Set WEB_CONCURRENCY on the server, about 2 x CPU cores + 1.
-workers = int(os.environ.get("WEB_CONCURRENCY", "1"))
+# Worker processes. Set WEB_CONCURRENCY on the server, about 2 x CPU cores + 1. The
+# default is 2, so one slow request (a login's password check, a slow email server)
+# never holds up every other visitor, and a worker being replaced (max_requests below)
+# never leaves the site with none. Each worker checking a login uses about 100 MB.
+workers = int(os.environ.get("WEB_CONCURRENCY", "2"))
 
 # A worker that doesn't respond for this many seconds is replaced.
 timeout = 30

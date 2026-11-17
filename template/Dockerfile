@@ -12,6 +12,12 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/app/.venv
 WORKDIR /app
+# git, so uv can install apps from a Git repository (git+https://github.com/...). Only
+# in this build stage: the runtime image below never has it. A private repository
+# needs a Docker build secret (see the README), never a token in this file.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
 
 # Dependencies first, so this slow layer is cached until uv.lock changes.
 COPY pyproject.toml uv.lock ./

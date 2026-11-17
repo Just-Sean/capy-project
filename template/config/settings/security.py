@@ -42,7 +42,10 @@ SECURE_CSP = {
     "default-src": [CSP.NONE],
     "script-src": [CSP.SELF, CSP.NONCE],
     "style-src": [CSP.SELF, CSP.NONCE],
-    "img-src": [CSP.SELF],
+    # data: images too: CSS frameworks such as daisyUI and Tailwind draw checkbox ticks,
+    # select arrows and icons as data:image/svg+xml. An image can't run code, so this
+    # loosens nothing else; scripts, styles and everything else stay as strict.
+    "img-src": [CSP.SELF, "data:"],
     "font-src": [CSP.SELF],
     "connect-src": [CSP.SELF],
     "object-src": [CSP.NONE],

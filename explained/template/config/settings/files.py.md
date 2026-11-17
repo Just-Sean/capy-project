@@ -6,7 +6,7 @@
 
 - They're collected into `staticfiles/` by `collectstatic` (the `Dockerfile` does this) and served by **WhiteNoise**.
 - The storage is `CompressedManifestStaticFilesStorage`: compressed files with cache-busting names like `app.3f9a1c.css`.
-- **Tests** use plain storage and serve straight from the apps, so no `collectstatic` is needed.
+- **Development and tests** use plain storage and serve straight from the apps, so no `collectstatic` is needed, even with `DJANGO_DEBUG=false` in development (the compressed storage would fail on every `{% static %}` without `collectstatic`'s list of files). Production keeps the compressed, cache-busting storage.
 
 **Uploads, two kinds:**
 

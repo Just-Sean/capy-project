@@ -9,13 +9,13 @@
 | First-time setup | `git init` → `.env` → `uv sync` → pre-commit → first commit → Postgres and Redis → `migrate` → `createsuperuser` → `runserver` |
 | Everyday commands | One table of the commands used most |
 | Environments | `DJANGO_ENV` (development, test, production), what each defaults to, and what production refuses |
-| Running each environment | **Development** (ports, Redis), **Test**, **Production**. Production covers the four `.env` files, Caddy's jobs, rate limits, the local HTTP check, the real-server steps, health checks, the worker's check and Gunicorn |
+| Running each environment | **Development** (ports, Redis), **Test**, **Production**. Production covers the four `.env` files, Caddy's jobs, rate limits, the local HTTP check, the real-server steps, deploying a new version (with a tag per deploy) and rolling back, health checks, the worker's check and Gunicorn |
 | Uploaded files | Private by default, `can_download()`, `random_folder`, `public_storage`, S3 |
 | Email | `EMAIL_URL` in each environment, percent-encoding, testing it |
 | Background jobs | `@task`, enqueueing, what differs in production, the worker, cleaning up old jobs |
 | Error pages | Which page shows when, `base.html` rules, the proxy's page |
 | Logs | Formats, what's in them (and what's left out), log levels, disk limits |
-| Backups | The database and both upload volumes: backing up and restoring, kept outside the project in `/var/backups/<slug>` |
+| Backups | The database and both upload volumes: backing up (files only the owner can read, and a ready-made nightly cron line that also deletes backups older than 14 days) and restoring (as one transaction), kept outside the project in `/var/backups/<slug>` |
 | Checking what's running | `ps`, `down`, `down -v` and what each deletes |
 | Security | Argon2, login rate limiting, headers, the CSP and its nonce, HSTS preload |
 | Checks | pre-commit, gitleaks scans, and before every pull request: `pytest --cov` and pip-audit |

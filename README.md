@@ -217,6 +217,28 @@ hand. Changes so far that need this:
   repository, turn on "Dependabot alerts" and "Dependabot security updates" (Settings >
   Code security). The project README now has a Backups section: set up the nightly
   backup it describes.
+- **v1 fixes (two workers, Git apps in the image, the head block, `data:` images,
+  development static files, cron backups, rolling back):** nothing to add by hand, but
+  check these:
+  - Gunicorn now starts **2 workers** unless `WEB_CONCURRENCY` is set. On a server with
+    less than 2 GB of memory, add swap or set `WEB_CONCURRENCY=1` in `.env.production`.
+  - `Dockerfile` installs `git` in its build stage. If your project changed the
+    Dockerfile, `copier update` shows a conflict there: keep both changes.
+  - `templates/base.html` has a new `{% block head %}`. If your project edited
+    `base.html`, keep your changes and add the block right after the viewport tag.
+  - The Content Security Policy now allows `data:` images (`img-src`). If your project
+    replaced `SECURE_CSP` in `config/settings/security.py`, add `"data:"` to its
+    `img-src` yourself if you use a CSS framework such as daisyUI or Tailwind.
+  - Development serves static files without `collectstatic` even with
+    `DJANGO_DEBUG=false`; production is unchanged.
+  - The project README now has a ready-made **cron line for nightly backups** (it also
+    deletes backups older than 14 days) and steps for **deploying, tagging and rolling
+    back**: if you scheduled backups yourself by copying the backup commands into a
+    crontab, replace them with that line (a plain `%` in a crontab silently breaks the
+    command, so those backups never ran). The backup commands now write files only you
+    can read, the upload archives too, and the restore runs as one transaction.
+  - That head block comes before `base.html`'s `color-scheme` tag, so a theme can set
+    its own (browsers use the first).
 - **Postgres image:** projects made before the compose split used the pgvector image.
   The official Postgres image doesn't include pgvector, so a project that uses it must
   switch its image back in `compose.yaml`.

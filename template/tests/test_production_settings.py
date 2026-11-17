@@ -162,3 +162,62 @@ def test_tests_cache_in_memory_without_redis():
     assert settings.CACHES["default"]["BACKEND"] == (
         "django.core.cache.backends.locmem.LocMemCache"
     )
+
+
+# Prints the static files storage, renders {% static %} for a file the admin ships, and
+# asks for that file, as a browser would.
+STATIC_TAG = (
+    "from django.conf import settings; from django.template import engines\n"
+    "from django.test import Client\n"
+    "print(settings.STORAGES['staticfiles']['BACKEND'].rsplit('.', 1)[-1])\n"
+    "url = engines['django'].from_string(\"{% load static %}{% static 'admin/css/base.css' %}\")"
+    ".render({})\n"
+    "print(url, Client().get(url).status_code)\n"
+)
+
+
+@pytest.mark.parametrize("debug", ["true", "false"])
+def test_development_serves_static_files_without_collectstatic(debug):
+    # The README's way to see the error pages: DJANGO_DEBUG=false in development. Without
+    # collectstatic, the production storage would fail on every {% static %}.
+    result = run_manage("shell", "-c", STATIC_TAG, DJANGO_ENV="development", DJANGO_DEBUG=debug)
+    assert result.returncode == 0, result.stderr
+    storage, served = result.stdout.strip().splitlines()[-2:]
+    assert storage == "StaticFilesStorage"
+    assert served == "/static/admin/css/base.css 200"
+
+
+# Prints the policy browsers must follow (enforced) and the one they only report.
+PRINT_CSP = (
+    "from django.conf import settings\n"
+    "for policy in (settings.SECURE_CSP, settings.SECURE_CSP_REPORT_ONLY):\n"
+    "    print(' '.join(str(source) for source in policy.get('img-src', [])) or 'none')\n"
+)
+
+
+def test_production_set_explicitly_enforces_the_policy_with_data_images():
+    result = run_manage("shell", "-c", PRINT_CSP, DJANGO_ENV="production")
+    assert result.returncode == 0, result.stderr
+    enforced, report_only = result.stdout.strip().splitlines()[-2:]
+    assert (enforced, report_only) == ("'self' data:", "none")
+
+
+def test_development_reports_data_images_as_allowed():
+    # Development only reports (Django's debug pages use inline styles), with the same
+    # img-src, so a CSS framework's data: images don't flood the console.
+    result = run_manage("shell", "-c", PRINT_CSP, DJANGO_ENV="development")
+    assert result.returncode == 0, result.stderr
+    enforced, report_only = result.stdout.strip().splitlines()[-2:]
+    assert (enforced, report_only) == ("none", "'self' data:")
+
+
+def test_production_keeps_compressed_cache_busting_static_files():
+    result = run_manage(
+        "shell",
+        "-c",
+        "from django.conf import settings; print(settings.STORAGES['staticfiles']['BACKEND'])",
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == (
+        "whitenoise.storage.CompressedManifestStaticFilesStorage"
+    )

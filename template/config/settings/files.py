@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 
 from django.core.exceptions import ImproperlyConfigured
 
-from .environment import BASE_DIR, IS_PRODUCTION, IS_TEST, env
+from .environment import BASE_DIR, IS_DEVELOPMENT, IS_PRODUCTION, IS_TEST, env
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"  # where collectstatic gathers files
@@ -88,10 +88,13 @@ MEDIA_SENT_BY_PROXY = (
     env.bool("DJANGO_MEDIA_SENT_BY_PROXY", default=False) and media_storage == "filesystem"
 )
 
-if IS_TEST:
-    # Serve static files without needing `collectstatic` first.
+if IS_DEVELOPMENT or IS_TEST:
+    # Serve static files without needing `collectstatic` first, even with
+    # DJANGO_DEBUG=false in development (to see the error pages): the compressed,
+    # cache-busting storage needs collectstatic's list of files, and without it every
+    # {% static %} fails. Production (the Docker image runs collectstatic) keeps it.
     STORAGES["staticfiles"] = {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"}
-    # Serve static files straight from the apps during tests, like development,
-    # so WhiteNoise doesn't look for the collectstatic folder.
+    # Serve static files straight from the apps, so WhiteNoise doesn't look for the
+    # collectstatic folder (with debug on it does this anyway).
     WHITENOISE_USE_FINDERS = True
     WHITENOISE_AUTOREFRESH = True
