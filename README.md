@@ -43,7 +43,8 @@ uv tool install copier          # once
 copier copy gh:Just-Sean/django-starter my-client-app     # the newest release
 ```
 
-Copier asks for the project's name, then makes the folder. Then follow the new
+Copier asks for the project's name and its slug (a short lowercase name for the code
+and the database), then makes the folder. Then follow the new
 project's README, **First-time setup**. Copier uses the newest release tag (v1.0.0 or
 later), never unfinished work, and records it, so `copier update` knows where the
 project started. (A local copy of the starter works the same:
@@ -71,43 +72,37 @@ hand. Changes that need this, newest release first:
 - **The app's own database login (production):** the app, the worker and `migrate` no
   longer log in as Postgres's superuser, but as their own login that can't run commands
   on the server, read its files or make logins (see the project README's Security
-  section). New projects get it automatically; a production database that already
-  exists needs it set up once, from the project folder on the server. Your current
-  login (`POSTGRES_USER`, e.g. `app`) stays the superuser, for backups and restores
-  only; the new login is called `site`:
+  section). New projects get it automatically. A production database that already
+  exists needs it set up once, after `copier update` (which adds
+  `deploy/postgres-app-user-upgrade.sql`), from the project folder on the server. Your
+  current login (`POSTGRES_USER`, e.g. `app`) stays the superuser, for backups and
+  restores only, with a new password (the app has known the old one); the new login is
+  called `site`. Take a backup first, and don't run it around 2:00, when the nightly
+  backup runs:
 
   ```bash
-  # 1. A password for the new login, saved for Postgres.
-  APP_DB_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
-  printf 'APP_DB_USER=site\nAPP_DB_PASSWORD=%s\n' "$APP_DB_PASSWORD" >> .env.postgres
-  # 2. Make the login and give it the database and everything in it (run once).
-  docker compose -f compose.yaml -f compose.prod.yaml exec -T -e APP_DB_PASSWORD="$APP_DB_PASSWORD" db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 --single-transaction --set pw="$APP_DB_PASSWORD"' <<'SQL'
-  CREATE ROLE site WITH LOGIN PASSWORD :'pw'
-    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-  DO $$
-  DECLARE item record;
-  BEGIN
-    EXECUTE format('ALTER DATABASE %I OWNER TO site', current_database());
-    FOR item IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
-      EXECUTE format('ALTER TABLE public.%I OWNER TO site', item.tablename);
-    END LOOP;
-    FOR item IN SELECT sequence_name FROM information_schema.sequences
-                WHERE sequence_schema = 'public' LOOP
-      EXECUTE format('ALTER SEQUENCE public.%I OWNER TO site', item.sequence_name);
-    END LOOP;
-    FOR item IN SELECT viewname FROM pg_views WHERE schemaname = 'public' LOOP
-      EXECUTE format('ALTER VIEW public.%I OWNER TO site', item.viewname);
-    END LOOP;
-  END $$;
-  SQL
-  # 3. Print the new DATABASE_URL, put it in .env.production in place of the old one,
-  #    then deploy as usual (it restarts everything with the new login).
-  echo "DATABASE_URL=postgres://site:$APP_DB_PASSWORD@db:5432/$(sed -n 's/^POSTGRES_DB=//p' .env.postgres)"
+  # 1. Two new passwords, kept only in this shell (never on a command line).
+  export APP_DB_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  export NEW_POSTGRES_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  # 2. Make the login, hand it the database and everything in it, and change the
+  #    superuser's password: one transaction, so if it fails nothing has changed.
+  docker compose -f compose.yaml -f compose.prod.yaml exec -T -e APP_DB_PASSWORD -e NEW_POSTGRES_PASSWORD db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 --single-transaction -f -' < deploy/postgres-app-user-upgrade.sql
+  # 3. Only if step 2 worked: save both logins in the env files.
+  python3 - <<'EOF'
+  import os, pathlib, re
+  postgres = pathlib.Path(".env.postgres")
+  text = re.sub(r"(?m)^POSTGRES_PASSWORD=.*$", lambda _: "POSTGRES_PASSWORD=" + os.environ["NEW_POSTGRES_PASSWORD"], postgres.read_text())
+  postgres.write_text(text.rstrip("\n") + "\nAPP_DB_USER=site\nAPP_DB_PASSWORD=" + os.environ["APP_DB_PASSWORD"] + "\n")
+  database = re.search(r"(?m)^POSTGRES_DB=(.*)$", text).group(1)
+  production = pathlib.Path(".env.production")
+  production.write_text(re.sub(r"(?m)^DATABASE_URL=.*$", lambda _: f"DATABASE_URL=postgres://site:{os.environ['APP_DB_PASSWORD']}@db:5432/{database}", production.read_text()))
+  print("Saved the new logins in .env.postgres and .env.production.")
+  EOF
+  # 4. Deploy as usual: everything restarts with the new logins.
   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
+  unset APP_DB_PASSWORD NEW_POSTGRES_PASSWORD
   ```
 
-  If step 2 fails, nothing has changed (it runs as one transaction). Take a backup
-  first, as before any change to the database.
 - **Restoring the database:** the project README's restore steps changed. The backup
   now goes into a new database first, and is swapped in only if that fully worked (the
   current one is kept as `<slug>_before_restore`). The old steps restored on top of the

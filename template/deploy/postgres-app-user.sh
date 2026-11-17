@@ -12,15 +12,17 @@
 # ("Update an existing project") for setting up the login on one.
 
 if [ -z "${APP_DB_USER:-}" ] || [ -z "${APP_DB_PASSWORD:-}" ]; then
-  echo "postgres-app-user.sh: set APP_DB_USER and APP_DB_PASSWORD in .env.postgres" >&2
+  echo "postgres-app-user.sh: set APP_DB_USER and APP_DB_PASSWORD in .env.postgres," \
+    "then delete the half-made database volume and start again (see the README)" >&2
   exit 1
 fi
 
 # The name and password go in as psql variables, quoted by psql itself, so no character
-# in them can change the SQL.
+# in them can change the SQL. The password is read from the environment inside psql
+# (\getenv), never put on a command line, where other users of the server could see it.
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-  --set app_user="$APP_DB_USER" --set app_password="$APP_DB_PASSWORD" \
-  --set db="$POSTGRES_DB" <<'SQL'
+  --set app_user="$APP_DB_USER" --set db="$POSTGRES_DB" <<'SQL'
+\getenv app_password APP_DB_PASSWORD
 CREATE ROLE :"app_user" WITH LOGIN PASSWORD :'app_password'
   NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 ALTER DATABASE :"db" OWNER TO :"app_user";
