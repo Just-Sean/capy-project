@@ -7,12 +7,16 @@
   The 500 page extends it, and Django shows that page when the request or the database
   may be what failed, so keep this file free of anything that needs them (the user, a
   query, {{ csp_nonce }}). For a nav bar or user menu, add a page that extends this one,
-  and have the rest of your pages extend that.
+  and have the rest of your pages extend that. That page (or any other) adds its
+  stylesheets, meta tags and scripts inside <head> with {% block head %}: a theme app's
+  tags that read the database go there, not in this file.
 {% endcomment %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% block head %}{% endblock %}
+  {# After the head block: browsers use the first color-scheme tag, so a theme's own wins. #}
   <meta name="color-scheme" content="light dark">
   <title>{% block title %}Untitled page{% endblock %}</title>
 </head>

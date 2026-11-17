@@ -19,7 +19,7 @@ EXPECTED_POLICY = {
     "default-src": ["'none'"],
     "script-src": ["'self'", NONCE],
     "style-src": ["'self'", NONCE],
-    "img-src": ["'self'"],
+    "img-src": ["'self'", "data:"],  # data: for CSS frameworks' images (ticks, arrows)
     "font-src": ["'self'"],
     "connect-src": ["'self'"],
     "object-src": ["'none'"],

@@ -10,8 +10,9 @@ Development doesn't use it: there Django runs on your machine.
 
 **Stage 1, `build`** (`python:3.14-slim-trixie` plus uv 0.11.32):
 
-1. Copies `pyproject.toml` and `uv.lock` first, then installs exactly the locked packages without the dev tools (`uv sync --locked --no-dev`). This slow layer is cached until `uv.lock` changes.
-2. Copies the code, apart from what `.dockerignore` leaves out, and runs `collectstatic`. Placeholder settings (`build-only` secret key and so on) let the settings load for that one command. They never reach the running container.
+1. Installs `git` (only in this stage; the runtime image never has it), so uv can install apps from a Git repository such as `git+https://github.com/...`. A private repository needs a Docker build secret, never a token in the Dockerfile.
+2. Copies `pyproject.toml` and `uv.lock` first, then installs exactly the locked packages without the dev tools (`uv sync --locked --no-dev`). This slow layer is cached until `uv.lock` changes.
+3. Copies the code, apart from what `.dockerignore` leaves out, and runs `collectstatic`. Placeholder settings (`build-only` secret key and so on) let the settings load for that one command. They never reach the running container.
 
 **Stage 2, `runtime`** (the same slim Python, without uv or build leftovers):
 

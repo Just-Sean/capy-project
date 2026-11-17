@@ -45,7 +45,7 @@ def test_gunicorn_accepts_every_value(monkeypatch):
 def test_production_values(monkeypatch):
     monkeypatch.delenv("WEB_CONCURRENCY", raising=False)
     config = gunicorn_config(monkeypatch)
-    assert config.workers == 1
+    assert config.workers == 2  # so one slow request never holds up every visitor
     assert config.timeout == 30
     assert config.graceful_timeout == 30
     assert config.max_requests == 1000

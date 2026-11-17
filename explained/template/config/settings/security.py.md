@@ -31,7 +31,8 @@
 | --- | --- |
 | `default-src` | Nothing. Anything not listed (frames, audio and video, workers, manifests) is blocked until a project allows it |
 | `script-src`, `style-src` | This site, plus inline code carrying the page's **nonce** (`<script nonce="{{ csp_nonce }}">`) |
-| `img-src`, `font-src`, `connect-src` | This site |
+| `img-src` | This site, plus `data:` images: CSS frameworks such as daisyUI and Tailwind draw checkbox ticks and select arrows that way. An image can't run code |
+| `font-src`, `connect-src` | This site |
 | `object-src`, `frame-ancestors` | Nothing |
 | `base-uri`, `form-action` | This site |
 | `report-uri` | `/csp-report/`, where browsers report what was blocked (`config/csp_report.py`) |

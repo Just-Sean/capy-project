@@ -300,12 +300,43 @@ address ranges to the global options at the top of `deploy/Caddyfile`
 (`servers { trusted_proxies static <ranges> }`); without that, Caddy replaces the
 CDN's `X-Forwarded-For` with the CDN's own address.
 
-Each run of that command migrates first, while the old app and worker keep running, so a
-migration must still work with the code already running (add things first, remove
-them in a later release). The app restarts with the new code, so for a few seconds
-requests wait (Caddy retries for up to 10) or get the error page. There is no rollback
-to a previous image yet; a later version of the starter adds versioned images and
-deploy steps.
+**Deploying a new version** later is the same command, from the project folder after
+`git pull`: `docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`.
+It migrates first, while the old app and worker keep running, so a migration must still
+work with the code already running (add things first, remove them in a later release).
+The app restarts with the new code, so for a few seconds requests wait (Caddy retries
+for up to 10) or get the error page. Before a deploy that changes the database, take a
+backup (see [Backups](#backups)). After each deploy that works, tag it, so you can find
+it again: `git tag deploy-$(date +%F-%H%M)`.
+
+**Rolling back** a deploy that went wrong: put the last version that worked back first,
+then fix the problem calmly. On the server, from the project folder:
+
+1. Find the last deploy that worked (`git tag --list 'deploy-*'`) and check it out:
+   `git checkout <tag>`.
+2. Deploy it, and restart Caddy in case its settings or error page changed:
+   ```bash
+   docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
+   docker compose -f compose.yaml -f compose.prod.yaml up -d --force-recreate caddy
+   ```
+3. Empty the cache, which may hold things the newer code stored that the older code
+   can't read (nobody is logged out: sessions are kept in the database):
+   `docker compose -f compose.yaml -f compose.prod.yaml exec web python manage.py shell -c "from django.core.cache import cache; cache.clear()"`.
+4. The database is **not** rolled back. That's why each release's migrations must keep
+   working with the previous release's code: the old code then runs on the newer
+   database. If a release changed the database in a way the old code can't use,
+   restore the backup taken before that deploy instead (see [Backups](#backups)), which
+   loses anything saved since.
+5. Background jobs the newer code queued for a job the older code doesn't have fail
+   when the worker reaches them: look for them in
+   `docker compose -f compose.yaml -f compose.prod.yaml logs worker`, and queue them
+   again once the fix is deployed.
+6. When the fix is ready: `git checkout main && git pull`, deploy as usual, and tag it.
+
+Rolling back to a version from before a security fix brings that problem back, so roll
+forward with a fix instead when the bad release was a security fix. The old version is
+rebuilt from scratch (no earlier image is kept), which takes as long as a normal deploy
+and needs Docker Hub and GitHub to be reachable.
 
 Two health checks on the app answer whatever the Host header is, before the HTTPS
 redirect, so something calling the app directly (by IP, often over plain HTTP) can poll
@@ -350,10 +381,13 @@ docker compose -f compose.yaml -f compose.prod.yaml restart worker   # then rest
 
 **Gunicorn**, the production server, takes its settings from `gunicorn.conf.py`:
 
-- **Gunicorn workers (web requests, not background jobs):** set `WEB_CONCURRENCY` in the app's environment, about 2 x CPU cores + 1
-  (default 1): in `.env.production` with Docker Compose, or `Environment=` in a
-  systemd service. Each worker checking a login at the same moment uses about 100 MB
-  (Argon2), so on a small server leave room for that.
+- **Gunicorn workers (web requests, not background jobs):** set `WEB_CONCURRENCY` in
+  the app's environment, about 2 x CPU cores + 1 (default 2, so one slow request never
+  holds up every visitor): in `.env.production` with Docker Compose, or `Environment=`
+  in a systemd service. Each worker checking a login at the same moment uses about
+  100 MB (Argon2). Everything in production together (Postgres, Redis, the app, the job
+  worker, Caddy) needs about 1 GB, so on a server with less than 2 GB of memory either
+  add swap or set `WEB_CONCURRENCY=1`, or the system may stop Postgres when it runs out.
 - **Timeouts and worker recycling:** edit `gunicorn.conf.py`.
 - **Where it listens:** in Docker, on port 8000 of the container (set by the
   Dockerfile), reached only by Caddy. Run directly on a Linux server, only on
@@ -627,13 +661,23 @@ plain HTML with the browser's own styles, in light or dark to match the visitor.
 `500.html` **and `base.html`** free of anything that needs the request, the user or the
 database: `500.html` extends `base.html`, and Django shows it when those may be what
 failed. For a nav bar or user menu, add a page that extends `base.html`, and have the
-rest of your pages extend that.
+rest of your pages extend that. Stylesheets, meta tags and scripts go inside `<head>`
+through `{% raw %}{% block head %}{% endraw %}`: fill it in that layout page, not in
+`base.html`, so the 500 page (which uses the bare `base.html`) never depends on them. A
+page that extends your layout and adds its own `<head>` tags must start its block with
+`{% raw %}{{ block.super }}{% endraw %}`; without it, the page replaces the layout's
+tags (its stylesheets and theme) instead of adding to them:
+
+```html
+{% raw %}{% extends "layout.html" %}{% load static %}
+{% block head %}{{ block.super }}<script src="{% static 'map.js' %}" defer></script>{% endblock %}{% endraw %}
+```
 
 To see the 400, 404 and 500 pages in development:
 
 1. Add `DJANGO_DEBUG=false` to `.env`, and restart `runserver`.
-2. Open <http://localhost:8000/no-such-page/>. (With debug off, `runserver` doesn't serve
-   static files, so the admin looks unstyled.)
+2. Open <http://localhost:8000/no-such-page/>. (Static files still work without
+   `collectstatic`: development serves them straight from the apps, debug on or off.)
 3. Remove the line and restart `runserver` when you're done.
 
 `templates/proxy_error.html` is for the reverse proxy, not Django: a complete page,
@@ -722,16 +766,41 @@ sudo install -d -m 700 -o "$USER" /var/backups/{{ project_slug }}
 Then, from the project folder on the server:
 
 ```bash
-# The database, as one file, while the site runs.
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /var/backups/{{ project_slug }}/db-$(date +%F).dump
-# The uploads, private and public.
-docker run --rm -v {{ project_slug }}-production_media:/data:ro -v /var/backups/{{ project_slug }}:/backup alpine tar czf /backup/media-$(date +%F).tar.gz -C /data .
-docker run --rm -v {{ project_slug }}-production_media_public:/data:ro -v /var/backups/{{ project_slug }}:/backup alpine tar czf /backup/media-public-$(date +%F).tar.gz -C /data .
+umask 077                                  # new files: readable only by you
+D=$(date +%F); B=/var/backups/{{ project_slug }}  # today's date, and the backup folder
+# The database, as one file, while the site runs. Written to a .tmp file first, so a
+# failed dump never leaves a file that looks like a backup.
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$B/db-$D.dump.tmp" && mv "$B/db-$D.dump.tmp" "$B/db-$D.dump"
+# The uploads, private and public, packed as you (so the files are yours, readable only by you).
+docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz -C /data ."
+docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz -C /data ."
 ```
 
-Run them on a schedule (e.g. a nightly cron job), copy the files somewhere else, then
-delete them from the server. A backup you've never restored may not work: try a
-restore on another machine now and then.
+Run them every night with cron, as the user that owns the backup folder. That user must
+be able to run `docker` (be in the `docker` group, which is as powerful as root, so
+only give it to an admin account). Open the crontab with `crontab -e` and add these two
+lines, with your project folder in place of `/path/to/project`. The second is **one
+line**:
+
+```
+PATH=/usr/local/bin:/usr/bin:/bin
+0 2 * * * cd /path/to/project && umask 077 && D=$(date +\%F) && B=/var/backups/{{ project_slug }} && docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "$B/db-$D.dump.tmp" && mv "$B/db-$D.dump.tmp" "$B/db-$D.dump" && docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-$D.tar.gz -C /data ." && docker run --rm --user "$(id -u):$(id -g)" -v {{ project_slug }}-production_media_public:/data:ro -v "$B":/backup alpine:3.24 sh -c "umask 077 && tar czf /backup/media-public-$D.tar.gz -C /data ." && find "$B" -type f -mtime +14 -delete
+```
+
+It's the commands above, run at 2:00 each night (the job clean-up runs at 3:00), plus a
+last step that deletes backups older than 14 days, so they never fill the disk the
+database needs. Things that differ from typing them yourself, and matter:
+
+- Cron reads a plain `%` as the end of the command, so the date is written `\%` (with
+  a plain `%` the line silently does nothing).
+- Cron's `PATH` is short; the first line makes sure it finds `docker`. If Docker was
+  installed as a snap, add `:/snap/bin` to it.
+- If one step fails, the ones after it don't run, and nothing old is deleted.
+
+Cron doesn't tell you when a job fails, so after the first night check that new dated
+files appear each day and aren't empty (`ls -l /var/backups/{{ project_slug }}`). Copy
+them somewhere else before they're deleted (14 days). A backup you've never restored
+may not work: try a restore on another machine now and then.
 
 To restore (replace `DATE` with the backup's date), stop the app and the worker so
 nothing writes meanwhile, put everything back, then start them again. On a new server,
@@ -742,11 +811,15 @@ delete them:
 
 ```bash
 docker compose -f compose.yaml -f compose.prod.yaml stop web worker
-docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner' < /var/backups/{{ project_slug }}/db-DATE.dump
-docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
-docker run --rm -v {{ project_slug }}-production_media_public:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker compose -f compose.yaml -f compose.prod.yaml exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --single-transaction --exit-on-error' < /var/backups/{{ project_slug }}/db-DATE.dump
+docker run --rm -v {{ project_slug }}-production_media:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
+docker run --rm -v {{ project_slug }}-production_media_public:/data -v /var/backups/{{ project_slug }}:/backup:ro alpine:3.24 sh -c 'tar xzf /backup/media-public-DATE.tar.gz -C /data && chown -R 10001:10001 /data'
 docker compose -f compose.yaml -f compose.prod.yaml up -d --wait
 ```
+
+The database is restored as one transaction: if anything goes wrong, the restore stops
+with an error and the database is left exactly as it was, never half-restored, so fix
+the cause and run it again before starting the app.
 
 With S3 uploads, the files are in the bucket: turn on its versioning (and, on AWS, a
 backup plan) instead of the two upload commands.
@@ -815,8 +888,12 @@ unless noted.
   `DJANGO_SECURE_*` variable in `.env.example`.
 - **Content Security Policy** (`SECURE_CSP`, Django's built-in one): browsers load only
   what the policy lists and block everything else, so code injected into a page doesn't
-  run. Scripts, styles, images, fonts and requests come from this site only; anything
-  not listed (frames, audio and video, workers) is blocked until a project allows it.
+  run. Scripts, styles, images, fonts and requests come from this site only, plus
+  `data:` images (CSS frameworks such as daisyUI and Tailwind draw checkbox ticks and
+  select arrows that way; an image can't run code); anything not listed (frames, audio
+  and video, workers) is blocked until a project allows it. Fonts given as `data:`
+  addresses (some icon and math CSS bundles do this) are blocked too: serve such fonts
+  as files instead.
   - Inline code needs the page's nonce: `<script nonce="{{ '{{' }} csp_nonce {{ '}}' }}">` or
     `<style nonce="{{ '{{' }} csp_nonce {{ '}}' }}">`.
   - Never use `style="..."` attributes, `onclick=`-style handlers or `javascript:` links:
@@ -958,7 +1035,16 @@ by itself.
 
 ### Adding a reusable app
 
-1. Install it (`uv add the-package`) or put its folder at the top of the project.
+1. Install it (`uv add the-package`), or from a Git repository at a released tag
+   (`uv add git+https://github.com/owner/the-app --tag v1.0.0`), or put its folder at
+   the top of the project. The production image installs Git apps too (its build stage
+   has `git`). A **private** repository needs a login while the image builds: never put
+   a token in the URL, `pyproject.toml` or the Dockerfile, where it would end up in git
+   or the image; pass it as a Docker build secret instead (Docker's "Build secrets"
+   docs, `RUN --mount=type=secret`). Give git the token only inside the same `RUN` as
+   `uv sync`, for example through `GIT_CONFIG_*` environment variables read from the
+   secret; never with `git config` in a step of its own, which saves the token in a
+   cached image layer.
 2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
    at the top.
 3. Include its URLs in `config/urls.py`, e.g.
@@ -970,7 +1056,11 @@ by itself.
    itself), then `uv run pytest`.
 
 What a plugged-in app gets from the shell, and should use: templates extend
-`base.html`; inline scripts and styles need `nonce="{% raw %}{{ csp_nonce }}{% endraw %}"` (see
+`base.html` and add stylesheets, meta tags and scripts inside `<head>` with
+`{% raw %}{% block head %}{% endraw %}` (starting with `{% raw %}{{ block.super }}{% endraw %}` when extending
+a page that already fills it); an app's tags that read the database (a theme app's,
+say) go in a layout page that extends `base.html`, never in `base.html` itself (see
+Error pages); inline scripts and styles need `nonce="{% raw %}{{ csp_nonce }}{% endraw %}"` (see
 Security); users are `settings.AUTH_USER_MODEL`; uploads are private unless stored with
 `public_storage`, and `can_download()` decides who gets them (see Uploaded files);
 slow work goes to a background job with the Tasks API (see Background jobs); email

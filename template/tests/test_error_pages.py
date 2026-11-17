@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from django.core.exceptions import PermissionDenied, SuspiciousOperation
 from django.http import HttpResponse
+from django.template import Context, Engine, Template
 from django.template.loader import render_to_string
 from django.test import Client
 from django.urls import path
@@ -111,6 +112,46 @@ def test_the_500_page_works_with_the_database_and_redis_down():
 def test_a_page_without_a_title_still_gets_one():
     html = render_to_string("base.html")
     assert "<title>Untitled page</title>" in html
+
+
+def test_a_page_can_add_to_the_head():
+    # A page (or an app's layer) extending base.html adds stylesheets and meta tags
+    # inside <head>, where browsers use them, without editing base.html.
+    page = Template(
+        '{% extends "base.html" %}{% block head %}<link rel="stylesheet" href="/x.css">'
+        "{% endblock %}{% block content %}<p>body</p>{% endblock %}"
+    )
+    html = page.render(Context())
+    head, body = html.split("</head>")
+    assert '<link rel="stylesheet" href="/x.css">' in head
+    assert "x.css" not in body and "<p>body</p>" in body
+
+
+def test_a_page_adds_to_its_layouts_head_with_block_super(tmp_path):
+    # The README's pattern: a layout fills the head (a theme's stylesheet), and a page
+    # that extends it adds its own tags after {{ block.super }}, keeping the layout's.
+    (tmp_path / "layout.html").write_text(
+        '{% extends "base.html" %}{% block head %}<link rel="stylesheet" href="/theme.css">'
+        "{% endblock %}"
+    )
+    (tmp_path / "page.html").write_text(
+        '{% extends "layout.html" %}{% block title %}Map{% endblock %}'
+        '{% block head %}{{ block.super }}<script src="/map.js" defer></script>{% endblock %}'
+    )
+    engine = Engine(dirs=[TEMPLATES_DIR, tmp_path])
+    head = engine.get_template("page.html").render(Context()).split("</head>")[0]
+    assert head.index("/theme.css") < head.index("/map.js")
+    assert "<title>Map</title>" in head
+
+
+def test_a_themes_color_scheme_comes_before_the_default():
+    # Browsers use the first color-scheme tag, so a light-only theme can set its own.
+    page = Template(
+        '{% extends "base.html" %}{% block head %}<meta name="color-scheme" content="light">'
+        "{% endblock %}"
+    )
+    html = page.render(Context())
+    assert html.index('content="light">') < html.index('content="light dark">')
 
 
 @pytest.mark.parametrize("page", sorted(TEMPLATES_DIR.glob("*.html")), ids=lambda p: p.name)
