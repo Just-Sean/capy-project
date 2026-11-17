@@ -68,6 +68,46 @@ hand. Changes that need this, newest release first:
 
 **New in v1.0.0** (updating from v0.4.0: these are all you need):
 
+- **The app's own database login (production):** the app, the worker and `migrate` no
+  longer log in as Postgres's superuser, but as their own login that can't run commands
+  on the server, read its files or make logins (see the project README's Security
+  section). New projects get it automatically; a production database that already
+  exists needs it set up once, from the project folder on the server. Your current
+  login (`POSTGRES_USER`, e.g. `app`) stays the superuser, for backups and restores
+  only; the new login is called `site`:
+
+  ```bash
+  # 1. A password for the new login, saved for Postgres.
+  APP_DB_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+  printf 'APP_DB_USER=site\nAPP_DB_PASSWORD=%s\n' "$APP_DB_PASSWORD" >> .env.postgres
+  # 2. Make the login and give it the database and everything in it (run once).
+  docker compose -f compose.yaml -f compose.prod.yaml exec -T -e APP_DB_PASSWORD="$APP_DB_PASSWORD" db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 --single-transaction --set pw="$APP_DB_PASSWORD"' <<'SQL'
+  CREATE ROLE site WITH LOGIN PASSWORD :'pw'
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+  DO $$
+  DECLARE item record;
+  BEGIN
+    EXECUTE format('ALTER DATABASE %I OWNER TO site', current_database());
+    FOR item IN SELECT tablename FROM pg_tables WHERE schemaname = 'public' LOOP
+      EXECUTE format('ALTER TABLE public.%I OWNER TO site', item.tablename);
+    END LOOP;
+    FOR item IN SELECT sequence_name FROM information_schema.sequences
+                WHERE sequence_schema = 'public' LOOP
+      EXECUTE format('ALTER SEQUENCE public.%I OWNER TO site', item.sequence_name);
+    END LOOP;
+    FOR item IN SELECT viewname FROM pg_views WHERE schemaname = 'public' LOOP
+      EXECUTE format('ALTER VIEW public.%I OWNER TO site', item.viewname);
+    END LOOP;
+  END $$;
+  SQL
+  # 3. Print the new DATABASE_URL, put it in .env.production in place of the old one,
+  #    then deploy as usual (it restarts everything with the new login).
+  echo "DATABASE_URL=postgres://site:$APP_DB_PASSWORD@db:5432/$(sed -n 's/^POSTGRES_DB=//p' .env.postgres)"
+  docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait
+  ```
+
+  If step 2 fails, nothing has changed (it runs as one transaction). Take a backup
+  first, as before any change to the database.
 - **Restoring the database:** the project README's restore steps changed. The backup
   now goes into a new database first, and is swapped in only if that fully worked (the
   current one is kept as `<slug>_before_restore`). The old steps restored on top of the

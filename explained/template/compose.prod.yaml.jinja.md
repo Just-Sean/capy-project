@@ -23,7 +23,7 @@
 
 | Service | What it does |
 | --- | --- |
-| `db` | Postgres. On the internal `backend` network only, with no published port. Keeps `pgdata`. Not capability-dropped, because its entrypoint starts as root to set up its data folder |
+| `db` | Postgres. On the internal `backend` network only, with no published port. Keeps `pgdata`. Mounts `deploy/postgres-app-user.sh`, which makes the app's own login (not a superuser) when the database is first created; `.env.postgres` holds both logins. Not capability-dropped, because its entrypoint starts as root to set up its data folder |
 | `redis` | The cache, locked down like the app. `/data` is in memory, owned by the redis user, and holds only the login file |
 | `migrate` | Applies migrations, then exits. Waits for a healthy `db`. Has no health check |
 | `web` | The app (Gunicorn). Starts **only if `migrate` succeeded** and Redis is healthy |

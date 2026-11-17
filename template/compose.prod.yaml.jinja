@@ -50,6 +50,8 @@ services:
     networks: [backend]
     volumes:
       - pgdata:/var/lib/postgresql
+      # Makes the app's own login, not a superuser, when the database is first created.
+      - ./deploy/postgres-app-user.sh:/docker-entrypoint-initdb.d/10-app-user.sh:ro
     restart: unless-stopped
 
   # The cache, locked down like the app: it runs as its own unprivileged user with a
