@@ -11,3 +11,5 @@
 - **A wrong password is refused,** so the other logins really prove the passwords: they connect over the container's network address, as the app does (Postgres trusts its own local connections).
 - **Passwords never go on a command line:** both files read them with `\getenv`.
 - **The upgrade** (`postgres-app-user-upgrade.sql`), on a real database made the old way with tables, an identity column, a serial, a sequence, a view, a materialized view, a function, an enum, a domain, a composite type, a schema of its own and an extension: everything ends up owned by `site`, which can use it all but can't create logins; the superuser's password changes; and without both passwords nothing changes.
+
+Every Postgres container is removed afterwards, with its volumes.

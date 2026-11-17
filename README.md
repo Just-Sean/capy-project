@@ -67,6 +67,10 @@ production, go through the notes below for every release newer than your project
 and the like: they're git-ignored). When an update adds a required setting, add it by
 hand. Changes that need this, newest release first:
 
+**New in v1.0.1:** nothing to do by hand. The tests that run Postgres and Caddy in
+Docker now remove their containers' unnamed volumes too, instead of leaving them
+behind after every run.
+
 **New in v1.0.0** (updating from v0.4.0: these are all you need):
 
 - **The app's own database login (production):** the app, the worker and `migrate` no
