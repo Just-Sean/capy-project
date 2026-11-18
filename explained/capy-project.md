@@ -1,8 +1,8 @@
-# django-starter (the repo root)
+# capy-project (the repo root)
 
 **What it is:** a [Copier](https://copier.readthedocs.io/) template that makes new Django projects. Each new project starts secure and ready for production, as a shell you plug small reusable Django apps into. The repo itself isn't a Django project: it holds the files a new project is made from.
 
-**How a project gets made:** `copier copy gh:Just-Sean/django-starter my-client-app` (the newest release) asks two questions (the project's name and its slug, see `copier.yml`). It then copies everything under `template/` into the new folder:
+**How a project gets made:** `copier copy gh:Just-Sean/capy-project my-client-app` (the newest release) asks two questions (the project's name and its slug, see `copier.yml`). It then copies everything under `template/` into the new folder:
 
 - Files ending in `.jinja` are filled in with the answers and lose the `.jinja` ending. For example, `compose.yaml.jinja` becomes `compose.yaml`, with the slug as the Compose project name.
 - Every other file is copied unchanged.

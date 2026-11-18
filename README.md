@@ -1,4 +1,7 @@
-# Django starter (Copier template)
+# capy-project (Copier template)
+
+Called django-starter up to v1.0.1: GitHub sends the old name here, so older links and
+projects' `copier update` keep working.
 
 A minimal, production-ready Django starting point. Every project made from it
 gets only what has to exist on day one:
@@ -40,7 +43,7 @@ Everything else (APIs, login pages, front end) is added per project.
 
 ```bash
 uv tool install copier          # once
-copier copy gh:Just-Sean/django-starter my-client-app     # the newest release
+copier copy gh:Just-Sean/capy-project my-client-app     # the newest release
 ```
 
 Copier asks for the project's name and its slug (a short lowercase name for the code
@@ -48,7 +51,7 @@ and the database), then makes the folder. Then follow the new
 project's README, **First-time setup**. Copier uses the newest release tag (v1.0.0 or
 later), never unfinished work, and records it, so `copier update` knows where the
 project started. (A local copy of the starter works the same:
-`copier copy /path/to/django-starter my-client-app`, as long as it has the tags.)
+`copier copy /path/to/capy-project my-client-app`, as long as it has the tags.)
 
 ## Update an existing project when the starter improves
 
@@ -323,7 +326,7 @@ behind after every run.
   `copier copy --vcs-ref=HEAD` from a local checkout includes uncommitted changes, so
   any file git doesn't ignore can end up in new projects.
 - It also has its own `.pre-commit-config.yaml`, which runs gitleaks on every commit.
-- **Trying changes before a release:** `copier copy --vcs-ref=HEAD /path/to/django-starter /tmp/try-it`
+- **Trying changes before a release:** `copier copy --vcs-ref=HEAD /path/to/capy-project /tmp/try-it`
   makes a throwaway project from your working copy, uncommitted changes included. Never
   use it for a real project: Copier records an unreleased version, and later refuses to
   update it to the release (it counts as going backwards).
