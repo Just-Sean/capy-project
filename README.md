@@ -79,8 +79,8 @@ hand. Changes that need this, newest release first:
   messages in a `role="status"` region. See the project README's "Page layout".
   - If your project has no `templates/layout.html`, `copier update` adds it: move your
     nav bar and footer into it (from your own layout page, or from `base.html`'s
-    `header` and `footer` blocks, which `layout.html`'s header replaces), and have your
-    pages extend it instead of `base.html`. A page fills only `title`, `head` and
+    `header` block, which `layout.html`'s header replaces, and its `footer` block),
+    and have your pages extend it instead of `base.html`. A page fills only `title`, `head` and
     `content`: a page that still fills its own `header` or `footer` hides the layout's,
     messages included.
   - If it already has one (capy-module's README suggested it), `copier update` leaves
