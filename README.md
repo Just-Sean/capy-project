@@ -70,6 +70,13 @@ production, go through the notes below for every release newer than your project
 and the like: they're git-ignored). When an update adds a required setting, add it by
 hand. Changes that need this, newest release first:
 
+**New in v1.1.0, the new name:** nothing to do. A project made before the rename (from
+django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
+(`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
+stop relying on it, change that line to `_src_path: gh:Just-Sean/capy-project` and
+commit. Never create a new repository called `django-starter` under this account: that
+ends the forwarding, and projects would update from the new repository instead.
+
 **New in v1.0.1:** nothing to do by hand. The tests that run Postgres and Caddy in
 Docker now remove their containers' unnamed volumes too, instead of leaving them
 behind after every run.

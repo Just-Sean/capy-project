@@ -4,6 +4,7 @@
 
 **What's in it:**
 
+- **Old name:** a note that the template was called django-starter up to v1.0.1, and that GitHub forwards the old name.
 - **What every project gets:** a short list covering the database, cache, settings, security, uploads, email, jobs, error pages, health checks, logs, Docker and Caddy, and the checks.
 - **Make a new project:** install Copier, then run `copier copy gh:Just-Sean/capy-project` (the newest release; `--vcs-ref=HEAD` is only for trying unreleased changes, see Working on the starter).
 - **Update an existing project:** commit, then run `copier update` (it moves the project to the newest release). Then comes the long part: **one note per change that needs a hand step**, grouped by the release that brought it ("New in v1.0.0", "New in v0.4.0"), newest first. Examples:
