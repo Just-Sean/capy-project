@@ -280,7 +280,8 @@ Stop:
 docker compose -f compose.yaml -f compose.prod.yaml down      # remove the containers (data is kept)
 ```
 
-**On a real server** the same four files hold the real values: the site's domain in
+**On a real server** the same four files (five with apps from a private repository)
+hold the real values: the site's domain in
 `SITE_ADDRESS` and `DJANGO_ALLOWED_HOSTS` (every name in `SITE_ADDRESS` must be in
 both; Caddy doesn't redirect `www.` to the bare domain). Before the first start:
 
@@ -663,8 +664,8 @@ Pages come in two layers, both in `templates/`:
   failed.
 - **`layout.html`** extends `base.html` and is the site's own layout: your nav bar,
   footer and theme. The site's own pages and plugged-in apps extend it. It's your file:
-  Copier makes it with the project (or adds it on update if it's missing), and
-  `copier update` never changes it after that.
+  Copier makes it with the project (or adds it on update if it's missing, so keep
+  it), and `copier update` never changes it after that.
 
 A page that extends `layout.html` fills only these blocks:
 
@@ -687,8 +688,9 @@ content"** link first (hidden until someone reaches it with the Tab key, so keyb
 users can jump past the nav), then `layout.html`'s `<header>`, `<main id="main">` with
 the page's content, and a footer if you add one. The `<header>` is meant for your nav
 (until you add one, it holds only the messages region): put the nav there, never in a
-page's content, and don't add another `<main>` (a page has
-exactly one). Add a footer by filling the `footer` block in `layout.html` with a
+page's content, and don't add another `<main>` (a page has exactly one). The messages
+sit in the header, before the skip link's target, so someone who uses the skip link
+goes past them. Add a footer by filling the `footer` block in `layout.html` with a
 `<footer>` element, once there's something to put in it (an empty one is an empty
 landmark for screen readers).
 
@@ -1201,7 +1203,7 @@ Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
    It needs no backup: if it's lost, make a new one.
 
    ```bash
-   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token) && echo && ls -l .env.git-token
+   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token && chmod 600 .env.git-token) && echo && ls -l .env.git-token
    ```
 
    `ls` shows `-rw-------` and a size above 0.

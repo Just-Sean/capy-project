@@ -78,7 +78,11 @@ hand. Changes that need this, newest release first:
   apps (modules from capy-module) extend. It holds the nav bar and shows Django's
   messages in a `role="status"` region. See the project README's "Page layout".
   - If your project has no `templates/layout.html`, `copier update` adds it: move your
-    nav bar and footer into it, and have your pages extend it instead of `base.html`.
+    nav bar and footer into it (from your own layout page, or from `base.html`'s
+    `header` and `footer` blocks, which `layout.html`'s header replaces), and have your
+    pages extend it instead of `base.html`. A page fills only `title`, `head` and
+    `content`: a page that still fills its own `header` or `footer` hides the layout's,
+    messages included.
   - If it already has one (capy-module's README suggested it), `copier update` leaves
     it alone. Make sure it has the messages region, which modules rely on, inside its
     `<header>`:
@@ -89,20 +93,27 @@ hand. Changes that need this, newest release first:
     searched first: move its contents into `templates/layout.html`.
   - If your site's layout has another name (`site_layout.html`, say), modules won't
     use it: move its contents into `layout.html`, or make `layout.html` extend it.
+    Keep a `templates/layout.html`: if it's missing, `copier update` adds it again.
+- **Error pages stay on `base.html`.** If you made any of yours (`400.html`,
+  `403.html`, `403_csrf.html`, `404.html`, `500.html`) extend your layout, make them
+  extend `base.html` again: the 500 page must work with the database down, and an
+  error page would use up a pending message. The new `tests/test_layout.py` names any
+  that don't.
 - **`templates/base.html`** has a new empty block on `<html>`, for attributes a theme
   module adds: `<html lang="en"{% block html_attrs %}{% endblock %}>`.
   If your project edited `base.html`, keep your changes and make its `<html>` line this
-  one.
+  one. Until then, `tests/test_layout.py`'s test with a theme's `html_attrs` fails.
 - **Apps from a private repository:** nothing to do. The project README has a new
   section with the exact steps for installing an app from a private GitHub repository
   while the production image builds (a read-only token as a Docker build secret), and
   how to check the token isn't in the image.
-- **The new name:** nothing to do. A project made before the rename (from
-  django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
-  (`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
-  stop relying on it, change that line to `_src_path: gh:Just-Sean/capy-project` and
-  commit. Never create a new repository called `django-starter` under this account:
-  that ends the forwarding, and projects would update from the new repository instead.
+- **The new name: point your project at it (recommended).** A project made before the
+  rename (from django-starter, up to v1.0.1) still names the old repository in
+  `.copier-answers.yml`, and `copier update` follows GitHub's forwarding from the old
+  name. That forwarding ends if a new `django-starter` repository is ever created
+  under this account, or if the account is renamed or deleted (someone else could then
+  take the name and serve your project's updates). So change that line to
+  `_src_path: gh:Just-Sean/capy-project` and commit.
 
 **New in v1.0.1:** nothing to do by hand. The tests that run Postgres and Caddy in
 Docker now remove their containers' unnamed volumes too, instead of leaving them
