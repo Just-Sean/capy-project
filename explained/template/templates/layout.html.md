@@ -12,4 +12,4 @@
 
 **Why not in `base.html`:** shell modules' tags read the database, and the 500 page uses the bare `base.html` when the database may be down. So everything that needs the request, the user or the database goes here.
 
-**Tested by** `tests/test_layout.py`: a page filling the three blocks, the messages region (with and without messages, shown once), and the error pages staying on `base.html`. The tests check the project's own edited `layout.html` too, so a missing messages region fails them.
+**Tested by** `tests/test_layout.py`: a page filling the three blocks; the messages region (with and without messages, shown once, in order and escaped); a theme's `html_attrs` on `<html>`, a nav link and wrapped messages in an edited stand-in layout; and the error pages staying on `base.html`. The tests check the project's own edited `layout.html` too, so a missing messages region fails them.
