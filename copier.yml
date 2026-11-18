@@ -1,5 +1,5 @@
 # Copier template: make a new project with
-#   copier copy gh:Just-Sean/django-starter my-client-app
+#   copier copy gh:Just-Sean/capy-project my-client-app
 # and later pull in starter improvements from inside the project with
 #   copier update
 

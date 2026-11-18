@@ -1,4 +1,7 @@
-# Django starter (Copier template)
+# capy-project (Copier template)
+
+Called django-starter up to v1.0.1: GitHub sends the old name here, so older links and
+projects' `copier update` keep working.
 
 A minimal, production-ready Django starting point. Every project made from it
 gets only what has to exist on day one:
@@ -40,7 +43,7 @@ Everything else (APIs, login pages, front end) is added per project.
 
 ```bash
 uv tool install copier          # once
-copier copy gh:Just-Sean/django-starter my-client-app     # the newest release
+copier copy gh:Just-Sean/capy-project my-client-app     # the newest release
 ```
 
 Copier asks for the project's name and its slug (a short lowercase name for the code
@@ -48,7 +51,7 @@ and the database), then makes the folder. Then follow the new
 project's README, **First-time setup**. Copier uses the newest release tag (v1.0.0 or
 later), never unfinished work, and records it, so `copier update` knows where the
 project started. (A local copy of the starter works the same:
-`copier copy /path/to/django-starter my-client-app`, as long as it has the tags.)
+`copier copy /path/to/capy-project my-client-app`, as long as it has the tags.)
 
 ## Update an existing project when the starter improves
 
@@ -66,6 +69,13 @@ production, go through the notes below for every release newer than your project
 `copier update` never touches a project's own secret files (`.env`, `.env.production`
 and the like: they're git-ignored). When an update adds a required setting, add it by
 hand. Changes that need this, newest release first:
+
+**New in v1.1.0, the new name:** nothing to do. A project made before the rename (from
+django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
+(`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
+stop relying on it, change that line to `_src_path: gh:Just-Sean/capy-project` and
+commit. Never create a new repository called `django-starter` under this account: that
+ends the forwarding, and projects would update from the new repository instead.
 
 **New in v1.0.1:** nothing to do by hand. The tests that run Postgres and Caddy in
 Docker now remove their containers' unnamed volumes too, instead of leaving them
@@ -323,7 +333,7 @@ behind after every run.
   `copier copy --vcs-ref=HEAD` from a local checkout includes uncommitted changes, so
   any file git doesn't ignore can end up in new projects.
 - It also has its own `.pre-commit-config.yaml`, which runs gitleaks on every commit.
-- **Trying changes before a release:** `copier copy --vcs-ref=HEAD /path/to/django-starter /tmp/try-it`
+- **Trying changes before a release:** `copier copy --vcs-ref=HEAD /path/to/capy-project /tmp/try-it`
   makes a throwaway project from your working copy, uncommitted changes included. Never
   use it for a real project: Copier records an unreleased version, and later refuses to
   update it to the release (it counts as going backwards).
