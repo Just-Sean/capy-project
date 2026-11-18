@@ -195,7 +195,8 @@ To update Caddy, change the version in both `FROM` lines of `deploy/caddy.Docker
 and the plugin's version on the `xcaddy build` line to a release that supports it,
 then deploy as usual (`up --build` rebuilds it).
 
-Settings and secrets come from four files next to it, which git and the image all ignore:
+Settings and secrets come from four files next to it (five with apps from a private
+repository), which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
@@ -203,6 +204,7 @@ Settings and secrets come from four files next to it, which git and the image al
 | `.env.postgres` | Postgres | Two logins and the database's name. `POSTGRES_USER` and `POSTGRES_PASSWORD`: the database's superuser, used **only** for backups and restores. `APP_DB_USER` and `APP_DB_PASSWORD`: the app's own login (not a superuser, see [Security](#security)), made by `deploy/postgres-app-user.sh` when the database is first created; `DATABASE_URL` uses this one, so its name and password must match. `POSTGRES_DB`: the database. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 | `.env.caddy` | Caddy | `SITE_ADDRESS`, the site's domain (e.g. `example.com`, or `example.com, www.example.com` for both), which Caddy gets the certificate for. Not a secret. |
+| `.env.git-token` | the image's build (optional) | Only for apps from a private repository: the GitHub token git uses while the image builds. See [Apps from a private repository](#apps-from-a-private-repository). |
 
 **To try it on your machine,** make the files once. This makes random passwords and
 a random secret key; the files are created readable only by you:
@@ -1153,13 +1155,8 @@ by itself.
 1. Install it (`uv add the-package`), or from a Git repository at a released tag
    (`uv add git+https://github.com/owner/the-app --tag v1.0.0`), or put its folder at
    the top of the project. The production image installs Git apps too (its build stage
-   has `git`). A **private** repository needs a login while the image builds: never put
-   a token in the URL, `pyproject.toml` or the Dockerfile, where it would end up in git
-   or the image; pass it as a Docker build secret instead (Docker's "Build secrets"
-   docs, `RUN --mount=type=secret`). Give git the token only inside the same `RUN` as
-   `uv sync`, for example through `GIT_CONFIG_*` environment variables read from the
-   secret; never with `git config` in a step of its own, which saves the token in a
-   cached image layer.
+   has `git`). A **private** repository needs a login while the image builds: see
+   [Apps from a private repository](#apps-from-a-private-repository).
 2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
    at the top.
 3. Include its URLs in `config/urls.py` (adding `include` to its
@@ -1182,6 +1179,104 @@ Security); users are `settings.AUTH_USER_MODEL`; uploads are private unless stor
 `public_storage`, and `can_download()` decides who gets them (see Uploaded files);
 slow work goes to a background job with the Tasks API (see Background jobs); email
 goes through `django.core.mail` (see Email).
+
+### Apps from a private repository
+
+The production image is built on the server, and git needs a login there to fetch a
+private app. It gets one as a Docker **build secret**: a file on the server that the
+build reads while it runs, and that never ends up in the image, its history or git.
+Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
+
+1. **Make a token** on GitHub: Settings > Developer settings > Personal access tokens
+   > Fine-grained tokens > Generate new token. Set:
+   - **Resource owner:** the account or organization that owns the apps. An
+     organization may have to approve the token before it works.
+   - **Repository access:** only the repositories the project installs.
+   - **Permissions:** "Contents: Read-only" and nothing else (GitHub adds
+     "Metadata: Read-only" by itself).
+   - **Expiration:** a date, with a reminder in your calendar to renew it.
+2. **Save it on the server**, in the project folder (next to `compose.prod.yaml`). This
+   asks for the token without showing it, and makes a file only you can read; its
+   name starts with `.env`, so git and the image's `.dockerignore` both leave it out.
+   It needs no backup: if it's lost, make a new one.
+
+   ```bash
+   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token) && echo && ls -l .env.git-token
+   ```
+
+   `ls` shows `-rw-------` and a size above 0.
+3. **In `Dockerfile`**, replace the `uv sync` step with this one, changing
+   `your-account` (twice) to the GitHub account or organization the apps come from,
+   written exactly as in the apps' addresses in `pyproject.toml` (upper and lower case
+   too). Git gets the token only inside this one step, and only for that account's
+   repositories; `required=true` stops the build with a clear error if the file is
+   missing:
+
+   ```dockerfile
+   RUN --mount=type=cache,target=/root/.cache/uv \
+       --mount=type=secret,id=git_token,required=true \
+       GIT_CONFIG_COUNT=1 \
+       GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/git_token)@github.com/your-account/.insteadOf" \
+       GIT_CONFIG_VALUE_0="https://github.com/your-account/" \
+       uv sync --locked --no-dev --no-install-project
+   ```
+
+   Never give git the token in a step of its own (`git config` in a `RUN`, `ARG`,
+   `ENV`): those are saved in the image (`tests/test_dockerfile.py` refuses `ARG`).
+4. **In `compose.prod.yaml`**, the app's build reads the secret. In the `x-app` block,
+   replace `build: .` with:
+
+   ```yaml
+     build:
+       context: .
+       secrets: [git_token]
+   ```
+
+   add, at the end of the file:
+
+   ```yaml
+   secrets:
+     git_token:
+       file: ./.env.git-token
+   ```
+
+   and, in the list of files at the top of the file, change "four files" to "five files"
+   and add this line:
+
+   ```yaml
+   #   .env.git-token   the GitHub token for apps from a private repository (build only)
+   ```
+
+5. **Deploy** as usual (`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`).
+   Then check the token is nowhere in the image: not in its history, and not in its
+   files. All three lines print nothing when all is well: the first only speaks up if
+   the token file is empty, and the other two search the history and the files (the
+   third gives the token to the search on its input, never on a command line, and
+   searches every folder except the system's live ones):
+
+   ```bash
+   test -s .env.git-token || echo "The token file is empty: save the token again (step 2)."
+   docker history --no-trunc {{ project_slug }}-web | grep -F -f .env.git-token
+   docker run --rm -i --user root --network none --entrypoint grep {{ project_slug }}-web -rlF -f - /app /etc /home /opt /root /srv /tmp /usr /var < .env.git-token
+   ```
+
+**When something goes wrong:** if the build stops at the `uv sync` step with a git
+"Authentication failed" or "Repository not found" error, the token has expired, can't
+see that repository, or `your-account` doesn't match the app's address: make a new
+token (step 1) and save it again (step 2), or fix step 3.
+
+**Afterwards:**
+
+- A production run on your own machine (see
+  [Production](#production-the-real-image-run-locally)) builds the image too, so it
+  needs a `.env.git-token` there as well, saved the same way (step 2).
+- `Dockerfile` and `compose.prod.yaml` come from the template, so after each
+  `copier update`, check that your changes from steps 3 and 4 are still there (keep
+  them when Copier shows a conflict).
+- On your own machine, `uv add`, `uv lock` and `uv sync` fetch the app with your own
+  git login: with GitHub's `gh` tool, run `gh auth setup-git` once.
+- When the token expires, make a new one and save it the same way (step 2), then
+  deploy.
 
 ## What's in the project
 
