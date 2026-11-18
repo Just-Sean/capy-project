@@ -101,8 +101,9 @@ def test_every_message_shows_in_order_and_escaped(client):
     sent = ["First ✓ 🎉", "<b>x</b> & y", "Third"]
     html = client.get("/invoices/", {"m": sent}).content.decode()
     region = status_region(html).group(2)
-    assert region.index("First ✓ 🎉") < region.index("&lt;b&gt;x&lt;/b&gt; &amp; y")
-    assert region.index("&amp; y") < region.index("Third")
+    shown = ["First ✓ 🎉", "&lt;b&gt;x&lt;/b&gt; &amp; y", "Third"]  # HTML shown as text
+    first, second, third = (region.index(text) for text in shown)
+    assert first < second < third
     assert "<b>x</b>" not in html
 
 

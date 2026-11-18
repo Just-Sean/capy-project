@@ -694,7 +694,8 @@ landmark for screen readers).
 its `<header>`: confirm actions with `messages.success(request, "Saved.")` (after
 `from django.contrib import messages`), and the next page shows it. The region is
 always there, so messages added inside it without a page reload (by htmx or
-JavaScript, e.g. `hx-swap="beforeend"` on the region) are announced; replacing the
+JavaScript; with htmx, `hx-target="[role=status]" hx-swap="beforeend"` on the
+button or form that makes the request) are announced; replacing the
 whole region silences screen readers. Plugged-in apps rely on it, so keep it, and
 never name a template variable `messages`: it's reserved for Django's messages, and a
 page's own `messages` would replace them in the region.
