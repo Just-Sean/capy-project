@@ -19,8 +19,8 @@ from django.urls import include, path
 from tests.test_error_pages import TEMPLATES_DIR
 
 ERROR_PAGES = ["400.html", "403.html", "403_csrf.html", "404.html", "500.html"]
-# Tags with no closing tag, so they never change how deep inside the region we are.
-VOID_TAGS = {"area", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
+# Template comments ({# #} and {% comment %}), skipped before looking for {% extends %}.
+COMMENTS = re.compile(r"\{#.*?#\}|\{%\s*comment\b.*?%\}.*?\{%\s*endcomment\s*%\}", re.DOTALL)
 FIRST_EXTENDS = re.compile(r"\{%\s*extends\s+(['\"])(?P<name>[^'\"]+)\1\s*%\}")
 
 # A theme module's lines read the database, so these tests may use it.
@@ -56,38 +56,40 @@ urlpatterns = [
 
 
 class StatusRegion(HTMLParser):
-    """Collects the text inside the element with role="status", however deeply its
-    messages are wrapped (a theme might put each in its own <div>), and whether that
-    element is inside <header>."""
+    """Collects the text inside the element with role="status", however its messages
+    are wrapped (a theme might put each in its own <div>, with icons or unclosed <li>s),
+    and whether that element is inside <header>. Only the region's own tag is counted,
+    so tags inside it that HTML lets you leave unclosed don't matter."""
 
     def __init__(self):
         super().__init__()
         self.found = False
         self.in_header = False
         self.region_in_header = False
-        self.depth = 0  # more than 0 while inside the region
+        self.region_tag = None  # the region's tag, e.g. "div", while inside it
+        self.depth = 0  # how many of that tag are open, while inside the region
         self.text = []
 
     def handle_starttag(self, tag, attrs):
-        if self.depth:
-            self.depth += tag not in VOID_TAGS
+        if self.region_tag:
+            self.depth += tag == self.region_tag
         elif ("role", "status") in attrs:
-            self.found, self.depth = True, 1
+            self.found, self.region_tag, self.depth = True, tag, 1
             self.region_in_header = self.in_header
         elif tag == "header":
             self.in_header = True
 
-    def handle_startendtag(self, tag, attrs):
-        pass  # <img ... />: opens and closes at once, so the depth stays the same
-
     def handle_endtag(self, tag):
-        if self.depth:
-            self.depth -= 1
+        if self.region_tag:
+            if tag == self.region_tag:
+                self.depth -= 1
+                if not self.depth:
+                    self.region_tag = None
         elif tag == "header":
             self.in_header = False
 
     def handle_data(self, data):
-        if self.depth:
+        if self.region_tag:
             self.text.append(data)
 
 
@@ -156,14 +158,14 @@ def test_a_message_waits_past_an_error_page_for_the_next_page(client):
 
 
 # A layout as a project edits it: a nav link, a theme's line on <html> (starting with a
-# space), its messages each in their own <div> with an icon, and a footer.
+# space), its messages in unclosed <li>s, each in a <div> with an icon, and a footer.
 EDITED_LAYOUT = """{% extends "base.html" %}
 {% block html_attrs %} data-theme="dark"{% endblock %}
 {% block header %}<header>
   <nav aria-label="Primary"><a href="{% url "csp-report" %}">Link</a></nav>
-  <div role="status">{% for message in messages %}
-    <div class="alert"><img src="/i.svg" alt=""><br/><span>{{ message }}</span></div>
-  {% endfor %}</div>
+  <div role="status"><ul>{% for message in messages %}
+    <li><div class="alert"><img src="/i.svg" alt=""><br/><span>{{ message }}</span></div>
+  {% endfor %}</ul></div>
 </header>{% endblock %}
 {% block footer %}<footer>Contact</footer>{% endblock %}
 """
@@ -188,7 +190,8 @@ def test_the_checks_work_with_an_edited_layout(client, settings, tmp_path):
 def test_error_pages_stay_on_the_bare_base(page):
     # The 500 page must work with the database down, and the layout is where tags that
     # read it go: error pages never use the layout.
-    match = FIRST_EXTENDS.search((TEMPLATES_DIR / page).read_text())
+    source = COMMENTS.sub("", (TEMPLATES_DIR / page).read_text())
+    match = FIRST_EXTENDS.search(source)
     assert match and match["name"] == "base.html", (
         f"{page} must extend base.html, not a layout (see the README's Error pages)"
     )
