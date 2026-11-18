@@ -195,7 +195,8 @@ To update Caddy, change the version in both `FROM` lines of `deploy/caddy.Docker
 and the plugin's version on the `xcaddy build` line to a release that supports it,
 then deploy as usual (`up --build` rebuilds it).
 
-Settings and secrets come from four files next to it, which git and the image all ignore:
+Settings and secrets come from four files next to it (five with apps from a private
+repository), which git and the image all ignore:
 
 | File | Read by | Holds |
 | --- | --- | --- |
@@ -1239,12 +1240,19 @@ Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
        file: ./.env.git-token
    ```
 
-   and add `.env.git-token` to the list of files at the top of the file.
+   and, in the list of files at the top of the file, change "four files" to "five files"
+   and add this line:
+
+   ```yaml
+   #   .env.git-token   the GitHub token for apps from a private repository (build only)
+   ```
+
 5. **Deploy** as usual (`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`).
    Then check the token is nowhere in the image: not in its history, and not in its
-   files. Each command prints nothing when all is well (the second gives the token to
-   the search on its input, never on a command line, and searches every folder except
-   the system's live ones):
+   files. All three lines print nothing when all is well: the first only speaks up if
+   the token file is empty, and the other two search the history and the files (the
+   third gives the token to the search on its input, never on a command line, and
+   searches every folder except the system's live ones):
 
    ```bash
    test -s .env.git-token || echo "The token file is empty: save the token again (step 2)."
