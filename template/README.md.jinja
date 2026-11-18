@@ -203,6 +203,7 @@ Settings and secrets come from four files next to it, which git and the image al
 | `.env.postgres` | Postgres | Two logins and the database's name. `POSTGRES_USER` and `POSTGRES_PASSWORD`: the database's superuser, used **only** for backups and restores. `APP_DB_USER` and `APP_DB_PASSWORD`: the app's own login (not a superuser, see [Security](#security)), made by `deploy/postgres-app-user.sh` when the database is first created; `DATABASE_URL` uses this one, so its name and password must match. `POSTGRES_DB`: the database. |
 | `.env.redis` | Redis | `REDIS_PASSWORD`, the password of Redis's `app` login. It must match the one in `CACHE_URL`. |
 | `.env.caddy` | Caddy | `SITE_ADDRESS`, the site's domain (e.g. `example.com`, or `example.com, www.example.com` for both), which Caddy gets the certificate for. Not a secret. |
+| `.env.git-token` | the image's build (optional) | Only for apps from a private repository: the GitHub token git uses while the image builds. See [Apps from a private repository](#apps-from-a-private-repository). |
 
 **To try it on your machine,** make the files once. This makes random passwords and
 a random secret key; the files are created readable only by you:
@@ -1185,19 +1186,28 @@ private app. It gets one as a Docker **build secret**: a file on the server that
 build reads while it runs, and that never ends up in the image, its history or git.
 Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
 
-1. **Make a token** on GitHub (Settings > Developer settings > Fine-grained tokens):
-   only the repositories the project installs, "Contents: Read-only" and nothing else,
-   and an expiry date (put a reminder in your calendar to renew it).
-2. **Save it on the server**, next to `compose.prod.yaml`, readable only by you. Its
-   name starts with `.env`, so git and the image's `.dockerignore` both leave it out:
+1. **Make a token** on GitHub: Settings > Developer settings > Personal access tokens
+   > Fine-grained tokens > Generate new token. Set:
+   - **Resource owner:** the account or organization that owns the apps. An
+     organization may have to approve the token before it works.
+   - **Repository access:** only the repositories the project installs.
+   - **Permissions:** "Contents: Read-only" and nothing else (GitHub adds
+     "Metadata: Read-only" by itself).
+   - **Expiration:** a date, with a reminder in your calendar to renew it.
+2. **Save it on the server**, in the project folder (next to `compose.prod.yaml`). This
+   asks for the token without showing it, and makes a file only you can read; its
+   name starts with `.env`, so git and the image's `.dockerignore` both leave it out.
+   It needs no backup: if it's lost, make a new one.
 
    ```bash
-   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token)
+   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token) && echo && ls -l .env.git-token
    ```
 
+   `ls` shows `-rw-------` and a size above 0.
 3. **In `Dockerfile`**, replace the `uv sync` step with this one, changing
-   `your-account` (twice) to the GitHub account or organization the apps come from.
-   Git gets the token only inside this one step, and only for that account's
+   `your-account` (twice) to the GitHub account or organization the apps come from,
+   written exactly as in the apps' addresses in `pyproject.toml` (upper and lower case
+   too). Git gets the token only inside this one step, and only for that account's
    repositories; `required=true` stops the build with a clear error if the file is
    missing:
 
@@ -1221,7 +1231,7 @@ Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
        secrets: [git_token]
    ```
 
-   and add, at the end of the file:
+   add, at the end of the file:
 
    ```yaml
    secrets:
@@ -1229,19 +1239,36 @@ Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
        file: ./.env.git-token
    ```
 
+   and add `.env.git-token` to the list of files at the top of the file.
 5. **Deploy** as usual (`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`).
-   To check the token is nowhere in the image, in its history or its files (both
-   print nothing; the second reads the token from the file, so it never appears on a
-   command line, and searches every folder except the system's live ones):
+   Then check the token is nowhere in the image: not in its history, and not in its
+   files. Each command prints nothing when all is well (the second gives the token to
+   the search on its input, never on a command line, and searches every folder except
+   the system's live ones):
 
    ```bash
+   test -s .env.git-token || echo "The token file is empty: save the token again (step 2)."
    docker history --no-trunc {{ project_slug }}-web | grep -F -f .env.git-token
-   docker run --rm -i --user root --entrypoint sh {{ project_slug }}-web -c 'IFS= read -r t || [ -n "$t" ]; grep -rlF -e "$t" /app /etc /home /opt /root /srv /tmp /usr /var' < .env.git-token
+   docker run --rm -i --user root --network none --entrypoint grep {{ project_slug }}-web -rlF -f - /app /etc /home /opt /root /srv /tmp /usr /var < .env.git-token
    ```
 
-On your own machine, `uv add`, `uv lock` and `uv sync` fetch the app with your own git
-login: with GitHub's `gh` tool, run `gh auth setup-git` once. When the token expires,
-make a new one and save it the same way (step 2), then deploy.
+**When something goes wrong:** if the build stops at the `uv sync` step with a git
+"Authentication failed" or "Repository not found" error, the token has expired, can't
+see that repository, or `your-account` doesn't match the app's address: make a new
+token (step 1) and save it again (step 2), or fix step 3.
+
+**Afterwards:**
+
+- A production run on your own machine (see
+  [Production](#production-the-real-image-run-locally)) builds the image too, so it
+  needs a `.env.git-token` there as well, saved the same way (step 2).
+- `Dockerfile` and `compose.prod.yaml` come from the template, so after each
+  `copier update`, check that your changes from steps 3 and 4 are still there (keep
+  them when Copier shows a conflict).
+- On your own machine, `uv add`, `uv lock` and `uv sync` fetch the app with your own
+  git login: with GitHub's `gh` tool, run `gh auth setup-git` once.
+- When the token expires, make a new one and save it the same way (step 2), then
+  deploy.
 
 ## What's in the project
 
