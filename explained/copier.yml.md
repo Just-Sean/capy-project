@@ -6,6 +6,7 @@
 
 - `_min_copier_version: "9.4"`: older Copier versions refuse to use the template.
 - `_subdirectory: template`: only files under `template/` go into new projects. The repo's own README, `.gitignore`, hook and `explained/` stay behind.
+- `_skip_if_exists: [templates/layout.html]`: the project's own files. Copier makes them in a new project (or one that doesn't have them yet), then `copier update` never changes them: the project fills them in, and later template changes come as notes in the README's update notes.
 - **Two questions:**
 
 | Question | Default | Used for |

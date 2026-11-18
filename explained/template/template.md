@@ -8,7 +8,7 @@
 | --- | --- |
 | `config/` | The Django project: settings (one file per topic), URLs, entry points and the project's own small modules |
 | `accounts/` | The custom `User` model |
-| `templates/` | `base.html`, the error pages, and the page Caddy shows when the app is down |
+| `templates/` | `base.html`, `layout.html` (the site's layout, the project's own file), the error pages, and the page Caddy shows when the app is down |
 | `static/` | The site's own static files: `site.css`, loaded on every page |
 | `tests/` | The project-wide tests |
 | `deploy/` | Caddy's config (`Caddyfile`) and its image (`caddy.Dockerfile`) |

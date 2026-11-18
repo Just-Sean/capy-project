@@ -13,13 +13,14 @@
 | Uploaded files | Private by default, `can_download()`, `random_folder`, `public_storage`, S3 |
 | Email | `EMAIL_URL` in each environment, percent-encoding, testing it |
 | Background jobs | `@task`, enqueueing, what differs in production, the worker, cleaning up old jobs |
-| Error pages | Which page shows when, `base.html` rules, the proxy's page |
+| Page layout | `base.html` vs `layout.html`, the three blocks a page fills, the messages region, shell modules' lines, the skip link |
+| Error pages | Which page shows when, why they stay on `base.html`, the proxy's page |
 | Logs | Formats, what's in them (and what's left out), log levels, disk limits |
 | Backups | The database and both upload volumes: backing up (files only the owner can read, and a ready-made nightly cron line that also deletes backups older than 14 days) and restoring (as one transaction), kept outside the project in `/var/backups/<slug>` |
 | Checking what's running | `ps`, `down`, `down -v` and what each deletes |
 | Security | Argon2, login rate limiting, headers, the CSP and its nonce, HSTS preload |
 | Checks | pre-commit, gitleaks scans, and before every pull request: `pytest --cov` and pip-audit |
-| Architecture | The main parts, a request's path, why each choice was made, and **Adding a reusable app** in five steps |
+| Architecture | The main parts, a request's path, why each choice was made, and **Adding a reusable app** in six steps |
 | What's in the project | A table of every file and what each test proves |
 | Conventions | Templates, `public_id`, business logic in plain functions |
 

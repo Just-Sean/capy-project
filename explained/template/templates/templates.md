@@ -4,7 +4,8 @@
 
 | File | Shown when |
 | --- | --- |
-| `base.html` | Never on its own: the page every other page extends |
+| `base.html` | Never on its own: the bare page every other page extends |
+| `layout.html` | Never on its own: the site's layout (nav, messages, shell modules' lines), which the site's pages and plugged-in apps extend. The project's own file: `copier update` never changes it once it exists |
 | `400.html` | A request the site can't use, e.g. a host name not in `ALLOWED_HOSTS` |
 | `403.html` | Access denied (`PermissionDenied`) |
 | `403_csrf.html` | A form failed its security check (`config/csrf_failure.py`) |
@@ -12,7 +13,7 @@
 | `500.html` | The site crashed (the error is logged with its stack trace) |
 | `proxy_error.html` | **Not Django's:** Caddy shows it when the app doesn't answer (502, 503, 504) |
 
-**Shared rules:**
+**Shared rules** (for the error pages, which extend the bare `base.html`, never `layout.html`):
 
 - **Minimal and accessible:** a title, a heading, a sentence saying what to do, and a link home. Every page has a title.
 - **Nothing inline** (`<script>`, `<style>`, `style=`, `onclick=`), so the Content Security Policy never blocks anything. `tests/test_error_pages.py` checks every page.

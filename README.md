@@ -25,6 +25,8 @@ gets only what has to exist on day one:
   stored in the database and run by a worker service in production (django-tasks-db)
 - Minimal, accessible error pages (400, 403, 404, 500, and a failed form security check)
   and a `base.html`, plus a static page for the reverse proxy to show when Django is down
+- A `layout.html` for the site's pages and plugged-in apps, with Django's messages and a
+  marked place for each shell module's line (a theme, an app shell)
 - Health checks: `/healthz` (the app runs) for Docker, `/readyz` (the database and Redis
   answer) for load balancers, and one for the job worker
 - Logs as one JSON object per line in production (Gunicorn's too, without query strings),
@@ -70,12 +72,33 @@ production, go through the notes below for every release newer than your project
 and the like: they're git-ignored). When an update adds a required setting, add it by
 hand. Changes that need this, newest release first:
 
-**New in v1.1.0, the new name:** nothing to do. A project made before the rename (from
-django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
-(`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
-stop relying on it, change that line to `_src_path: gh:Just-Sean/capy-project` and
-commit. Never create a new repository called `django-starter` under this account: that
-ends the forwarding, and projects would update from the new repository instead.
+**New in v1.1.0:**
+
+- **`templates/layout.html`:** the site's own layout, which your pages and plugged-in
+  apps (modules from capy-module) extend. It holds the nav bar and shows Django's
+  messages in a `role="status"` region. See the project README's "Page layout".
+  - If your project has no `templates/layout.html`, `copier update` adds it: move your
+    nav bar and footer into it, and have your pages extend it instead of `base.html`.
+  - If it already has one (capy-module's README suggested it), `copier update` leaves
+    it alone. Make sure it has the messages region, which modules rely on, inside its
+    `<header>`:
+    `<div role="status">{% for message in messages %}<p>{{ message }}</p>{% endfor %}</div>`.
+    The new `tests/test_layout.py` fails until it's there.
+  - If one of your apps has a `layout.html` of its own (`<app>/templates/layout.html`),
+    the new `templates/layout.html` replaces it, since the root `templates/` is
+    searched first: move its contents into `templates/layout.html`.
+  - If your site's layout has another name (`site_layout.html`, say), modules won't
+    use it: move its contents into `layout.html`, or make `layout.html` extend it.
+- **`templates/base.html`** has a new empty block on `<html>`, for attributes a theme
+  module adds: `<html lang="en"{% block html_attrs %}{% endblock %}>`.
+  If your project edited `base.html`, keep your changes and make its `<html>` line this
+  one.
+- **The new name:** nothing to do. A project made before the rename (from
+  django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
+  (`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
+  stop relying on it, change that line to `_src_path: gh:Just-Sean/capy-project` and
+  commit. Never create a new repository called `django-starter` under this account:
+  that ends the forwarding, and projects would update from the new repository instead.
 
 **New in v1.0.1:** nothing to do by hand. The tests that run Postgres and Caddy in
 Docker now remove their containers' unnamed volumes too, instead of leaving them

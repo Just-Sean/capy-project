@@ -14,7 +14,7 @@ Later, `copier update` inside the project pulls in the starter's improvements.
 | Folder / file | Purpose |
 | --- | --- |
 | `template/` | **What new projects get.** Everything in it becomes a project file. |
-| `copier.yml` | Copier's settings: the two questions, and that only `template/` is copied. |
+| `copier.yml` | Copier's settings: the two questions, that only `template/` is copied, and which files are the project's own (`copier update` never changes them). |
 | `README.md` | How to make and update a project, the notes for each update, and how to work on the starter. |
 | `.gitignore` | Files the starter repo itself never commits. |
 | `.pre-commit-config.yaml` | The starter repo's own commit check (gitleaks). |
@@ -28,7 +28,7 @@ Later, `copier update` inside the project pulls in the starter's improvements.
 **What a generated project contains:**
 
 - **The Django app:** `config/` (settings, URLs, health checks, logs, private uploads) and `accounts/` (the custom `User`).
-- **Templates:** `templates/`, with `base.html`, the error pages and the proxy's error page.
+- **Templates:** `templates/`, with `base.html`, `layout.html` (the site's layout, the project's own file), the error pages and the proxy's error page.
 - **Tests:** `tests/`.
 - **Development:** Docker Compose runs PostgreSQL 18 and Redis 8, and Django runs on your machine with `runserver`.
 - **Production:** Docker Compose runs Postgres, Redis, a migrate step, the app under Gunicorn, a background-job worker, and Caddy in front for HTTPS and rate limits.
