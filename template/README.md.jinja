@@ -661,7 +661,8 @@ Pages come in two layers, both in `templates/`:
   failed.
 - **`layout.html`** extends `base.html` and is the site's own layout: your nav bar,
   footer and theme. The site's own pages and plugged-in apps extend it. It's your file:
-  `copier update` makes it once and never changes it after that.
+  Copier makes it with the project (or adds it on update if it's missing), and
+  `copier update` never changes it after that.
 
 A page that extends `layout.html` fills only these blocks:
 
@@ -682,20 +683,27 @@ A page that extends `layout.html` fills only these blocks:
 The structure, which screen readers announce as landmarks: a **"Skip to the main
 content"** link first (hidden until someone reaches it with the Tab key, so keyboard
 users can jump past the nav), then `layout.html`'s `<header>`, `<main id="main">` with
-the page's content, and a footer if you add one. Put the nav in `layout.html`'s
-`<header>`, never in a page's content, and don't add another `<main>` (a page has
+the page's content, and a footer if you add one. The `<header>` is meant for your nav
+(until you add one, it holds only the messages region): put the nav there, never in a
+page's content, and don't add another `<main>` (a page has
 exactly one). Add a footer by filling the `footer` block in `layout.html` with a
 `<footer>` element, once there's something to put in it (an empty one is an empty
 landmark for screen readers).
 
 `layout.html` also shows Django's messages ("Saved.") in a `role="status"` region in
-its `<header>`: confirm actions with `messages.success(request, "Saved.")`, and the
-next page shows it. The region is always there, so messages added without a page
-reload (by htmx or JavaScript) are announced; plugged-in apps rely on it, so keep it.
+its `<header>`: confirm actions with `messages.success(request, "Saved.")` (after
+`from django.contrib import messages`), and the next page shows it. The region is
+always there, so messages added inside it without a page reload (by htmx or
+JavaScript, e.g. `hx-swap="beforeend"` on the region) are announced; replacing the
+whole region silences screen readers. Plugged-in apps rely on it, so keep it, and
+never name a template variable `messages`: it's reserved for Django's messages, and a
+page's own `messages` would replace them in the region.
 
 **Shell-type apps** (a theme, an app shell with a nav menu) each give one line to add to
 `layout.html`, where its comments say (attributes on `<html>`, the page's head, the
-nav); the app's README names the line. Their tags read the database, which is why they
+nav); the app's README names the line. A line for `<html>` (the `html_attrs` block)
+starts with a space, as in `{% raw %}{% block html_attrs %} data-theme="dark"{% endblock %}{% endraw %}`,
+since it follows `lang="en"`. Their tags read the database, which is why they
 go in `layout.html`, never in `base.html`.
 
 The skip link is styled by `static/site.css`, the site's own stylesheet, which
@@ -1153,8 +1161,8 @@ by itself.
    cached image layer.
 2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
    at the top.
-3. Include its URLs in `config/urls.py` (and change its import to
-   `from django.urls import include, path`), e.g.
+3. Include its URLs in `config/urls.py` (adding `include` to its
+   `from django.urls import path` line if it isn't there yet), e.g.
    `path("billing/", include("billing.urls"))`.
 4. Put any settings it needs in the topic file they belong to (or a new one, added to
    `config/settings/__init__.py` and `TOPICS` in `tests/test_settings_package.py`),
@@ -1194,6 +1202,7 @@ goes through `django.core.mail` (see Email).
 | `static/` | The site's own static files (`STATICFILES_DIRS`): `site.css`, loaded by `base.html` on every page (it hides the skip link until it's focused). Add the site's own CSS, JavaScript and images here |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_error_pages.py` | Proves each error (400, 403, failed form check, 404, 500) shows the site's page without internal details, a failed form check gives its reason only with debug on, a crash shows the 500 page with the database and Redis down, pages always have a title, no page has code the CSP would block, and the proxy's page loads nothing |
+| `tests/test_layout.py` | Proves a page extending `layout.html` fills only `title`, `head` (after the layout's own tags) and `content`; Django's messages show once, in order and escaped, in the always-present `role="status"` region inside `<header>`; a theme's `html_attrs` land on `<html>`; and the error pages stay on the bare `base.html` |
 | `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database refuses or never answers (while `/healthz` still answers), the database check uses its own connection, failures are logged without connection details, and the worker's check fails when the database is down or jobs wait with none started, but not for a busy worker, finished jobs, other queues or Redis being down |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
