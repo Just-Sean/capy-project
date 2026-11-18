@@ -280,7 +280,8 @@ Stop:
 docker compose -f compose.yaml -f compose.prod.yaml down      # remove the containers (data is kept)
 ```
 
-**On a real server** the same four files hold the real values: the site's domain in
+**On a real server** the same four files (five with apps from a private repository)
+hold the real values: the site's domain in
 `SITE_ADDRESS` and `DJANGO_ALLOWED_HOSTS` (every name in `SITE_ADDRESS` must be in
 both; Caddy doesn't redirect `www.` to the bare domain). Before the first start:
 
@@ -663,8 +664,8 @@ Pages come in two layers, both in `templates/`:
   failed.
 - **`layout.html`** extends `base.html` and is the site's own layout: your nav bar,
   footer and theme. The site's own pages and plugged-in apps extend it. It's your file:
-  Copier makes it with the project (or adds it on update if it's missing), and
-  `copier update` never changes it after that.
+  Copier makes it with the project (or adds it on update if it's missing, so keep
+  it), and `copier update` never changes it after that.
 
 A page that extends `layout.html` fills only these blocks:
 
@@ -687,8 +688,9 @@ content"** link first (hidden until someone reaches it with the Tab key, so keyb
 users can jump past the nav), then `layout.html`'s `<header>`, `<main id="main">` with
 the page's content, and a footer if you add one. The `<header>` is meant for your nav
 (until you add one, it holds only the messages region): put the nav there, never in a
-page's content, and don't add another `<main>` (a page has
-exactly one). Add a footer by filling the `footer` block in `layout.html` with a
+page's content, and don't add another `<main>` (a page has exactly one). The messages
+sit in the header, before the skip link's target, so someone who uses the skip link
+goes past them. Add a footer by filling the `footer` block in `layout.html` with a
 `<footer>` element, once there's something to put in it (an empty one is an empty
 landmark for screen readers).
 
@@ -1201,7 +1203,7 @@ Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
    It needs no backup: if it's lost, make a new one.
 
    ```bash
-   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token) && echo && ls -l .env.git-token
+   (umask 077 && read -rsp "Token: " t && rm -f .env.git-token && printf '%s' "$t" > .env.git-token) && echo && ls -l .env.git-token
    ```
 
    `ls` shows `-rw-------` and a size above 0.
@@ -1298,7 +1300,7 @@ token (step 1) and save it again (step 2), or fix step 3.
 | `static/` | The site's own static files (`STATICFILES_DIRS`): `site.css`, loaded by `base.html` on every page (it hides the skip link until it's focused). Add the site's own CSS, JavaScript and images here |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_error_pages.py` | Proves each error (400, 403, failed form check, 404, 500) shows the site's page without internal details, a failed form check gives its reason only with debug on, a crash shows the 500 page with the database and Redis down, pages always have a title, no page has code the CSP would block, and the proxy's page loads nothing |
-| `tests/test_layout.py` | Proves a page extending `layout.html` fills only `title`, `head` (after the layout's own tags) and `content`; Django's messages show once, in order and escaped, in the always-present `role="status"` region inside `<header>`; a theme's `html_attrs` land on `<html>`; and the error pages stay on the bare `base.html` |
+| `tests/test_layout.py` | Proves a page extending `layout.html` fills only `title`, `head` (after the layout's own tags) and `content`; Django's messages show once, in order and escaped, in the always-present `role="status"` region inside `<header>`; the same checks hold for an edited layout (a nav link, a theme's `html_attrs` on `<html>`, messages wrapped in their own elements, a footer), and for your own `layout.html`; and the error pages stay on the bare `base.html` (the check names any that don't) |
 | `tests/test_readyz.py` | Proves `/readyz` is `ok` only when the database and Redis answer, a quick 503 when the database refuses or never answers (while `/healthz` still answers), the database check uses its own connection, failures are logged without connection details, and the worker's check fails when the database is down or jobs wait with none started, but not for a busy worker, finished jobs, other queues or Redis being down |
 | `tests/test_production_settings.py` | Proves production is secure and refuses bad config |
 | `tests/test_migrations.py` | Fails if a model changed without a migration |
