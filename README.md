@@ -93,6 +93,10 @@ hand. Changes that need this, newest release first:
   module adds: `<html lang="en"{% block html_attrs %}{% endblock %}>`.
   If your project edited `base.html`, keep your changes and make its `<html>` line this
   one.
+- **Apps from a private repository:** nothing to do. The project README has a new
+  section with the exact steps for installing an app from a private GitHub repository
+  while the production image builds (a read-only token as a Docker build secret), and
+  how to check the token isn't in the image.
 - **The new name:** nothing to do. A project made before the rename (from
   django-starter, up to v1.0.1) still names the old repository in `.copier-answers.yml`
   (`_src_path`), and `copier update` follows GitHub's forwarding from the old name. To
