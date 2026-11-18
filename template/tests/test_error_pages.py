@@ -148,8 +148,9 @@ def test_a_page_adds_to_its_layouts_head_with_block_super(tmp_path):
         '{% extends "layout.html" %}{% block title %}Map{% endblock %}'
         '{% block head %}{{ block.super }}<script src="/map.js" defer></script>{% endblock %}'
     )
+    # The stand-in layout first, ahead of the project's own templates/layout.html.
     engine = Engine(
-        dirs=[TEMPLATES_DIR, tmp_path], libraries={"static": "django.templatetags.static"}
+        dirs=[tmp_path, TEMPLATES_DIR], libraries={"static": "django.templatetags.static"}
     )
     head = engine.get_template("page.html").render(Context()).split("</head>")[0]
     assert head.index("/theme.css") < head.index("/map.js")

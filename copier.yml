@@ -5,6 +5,10 @@
 
 _min_copier_version: "9.4"
 _subdirectory: template      # only files under template/ are copied into projects
+# The project's own files: made once, then never changed by `copier update` (the project
+# fills them in, and later template changes come as notes in the README's update notes).
+_skip_if_exists:
+  - templates/layout.html
 
 project_name:
   type: str

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% comment %}
+  The layout for the site's own pages and for plugged-in apps (modules). They extend this
+  file and fill only the title, head and content blocks; a page's head block starts with
+  {{ block.super }}, so it adds to this file's head instead of replacing it.
+  It's the project's own file: put your nav bar in the header, and add a footer block
+  (with a <footer> element) once there's something to put in it. copier update never
+  changes it once it exists.
+  Shell-type modules (a theme, an app shell) each give one line to add where the
+  comments below say; their READMEs name the line. Tags that read the database go here,
+  never in base.html: the 500 page uses base.html alone and must work with the database
+  down.
+  Django's messages ("Saved.") show in the role="status" region, which is always there
+  so that messages added without a page reload are announced. Modules rely on it.
+{% endcomment %}
+{% block html_attrs %}{# Theme module: its line for attributes on <html> goes here. #}{% endblock %}
+{% block head %}{# Theme module: its line for the page's head goes here. #}{% endblock %}
+{% block header %}
+<header>
+  {# Your nav bar; theme and app-shell modules' lines for it (logo, menu, light/dark switch) go here. #}
+  <div role="status">
+    {% for message in messages %}<p>{{ message }}</p>{% endfor %}
+  </div>
+</header>
+{% endblock %}

@@ -650,6 +650,59 @@ and `cd` into the project folder first:
 0 3 * * * cd /path/to/project && docker compose -f compose.yaml -f compose.prod.yaml run --rm -T worker python manage.py prune_db_task_results
 ```
 
+### Page layout
+
+Pages come in two layers, both in `templates/`:
+
+- **`base.html`** is the bare page: plain HTML with the browser's own styles, in light
+  or dark to match the visitor. The error pages extend it. Keep it free of anything
+  that needs the request, the user or the database (no queries, no
+  `{% raw %}{{ csp_nonce }}{% endraw %}`): the 500 page uses it when those may be what
+  failed.
+- **`layout.html`** extends `base.html` and is the site's own layout: your nav bar,
+  footer and theme. The site's own pages and plugged-in apps extend it. It's your file:
+  `copier update` makes it once and never changes it after that.
+
+A page that extends `layout.html` fills only these blocks:
+
+- `{% raw %}{% block title %}{% endraw %}`: always, with what the page is ("Edit
+  invoice"). Without it the tab says "Untitled page", which screen readers announce.
+- `{% raw %}{% block head %}{% endraw %}`: the page's own stylesheets, meta tags and
+  scripts, starting with `{% raw %}{{ block.super }}{% endraw %}`. Without it, the page
+  replaces the layout's tags (its theme, for example) instead of adding to them.
+- `{% raw %}{% block content %}{% endraw %}`: the page itself.
+
+```html
+{% raw %}{% extends "layout.html" %}{% load static %}
+{% block title %}Map{% endblock %}
+{% block head %}{{ block.super }}<script src="{% static 'map.js' %}" defer></script>{% endblock %}
+{% block content %}<h1>Map</h1>{% endblock %}{% endraw %}
+```
+
+The structure, which screen readers announce as landmarks: a **"Skip to the main
+content"** link first (hidden until someone reaches it with the Tab key, so keyboard
+users can jump past the nav), then `layout.html`'s `<header>`, `<main id="main">` with
+the page's content, and a footer if you add one. Put the nav in `layout.html`'s
+`<header>`, never in a page's content, and don't add another `<main>` (a page has
+exactly one). Add a footer by filling the `footer` block in `layout.html` with a
+`<footer>` element, once there's something to put in it (an empty one is an empty
+landmark for screen readers).
+
+`layout.html` also shows Django's messages ("Saved.") in a `role="status"` region in
+its `<header>`: confirm actions with `messages.success(request, "Saved.")`, and the
+next page shows it. The region is always there, so messages added without a page
+reload (by htmx or JavaScript) are announced; plugged-in apps rely on it, so keep it.
+
+**Shell-type apps** (a theme, an app shell with a nav menu) each give one line to add to
+`layout.html`, where its comments say (attributes on `<html>`, the page's head, the
+nav); the app's README names the line. Their tags read the database, which is why they
+go in `layout.html`, never in `base.html`.
+
+The skip link is styled by `static/site.css`, the site's own stylesheet, which
+`base.html` loads on every page. If your header sticks to the top of the screen
+(`position: sticky` or `fixed`), keep the skip link above it (a higher `z-index` than
+the header's), so it's never hidden when it's reached.
+
 ### Error pages
 
 These errors show the site's own pages from `templates/`, with no internal details:
@@ -667,40 +720,9 @@ development (debug on), Django shows its detailed debug pages for 400, 404 and 5
 instead; the 403 pages show either way. The pages link to `/`, so give your project a
 view at `/` (until then, the link shows the 404 page).
 
-They extend `templates/base.html`, which a project's own pages can extend too: it's
-plain HTML with the browser's own styles, in light or dark to match the visitor. Keep
-`500.html` **and `base.html`** free of anything that needs the request, the user or the
-database: `500.html` extends `base.html`, and Django shows it when those may be what
-failed. For a nav bar or user menu, add a layout page that extends `base.html`, and
-have the rest of your pages extend that.
-
-`base.html` gives every page the same structure, which screen readers announce as
-landmarks: a **"Skip to the main content"** link first (hidden until someone reaches
-it with the Tab key, so keyboard users can jump past the nav), then the `header`
-block, `<main id="main">` with the `content` block, and the `footer` block. Put the
-site's header and nav in `header`, its footer in `footer`, never inside `content`, and
-don't add another `<main>` in `content` (a page has exactly one):
-
-```html
-{% raw %}{% extends "base.html" %}
-{% block header %}<header><nav aria-label="Primary">...</nav></header>{% endblock %}
-{% block footer %}<footer>...</footer>{% endblock %}{% endraw %}
-```
-
-The skip link is styled by `static/site.css`, the site's own stylesheet, which
-`base.html` loads on every page. If your header sticks to the top of the screen
-(`position: sticky` or `fixed`), keep the skip link above it (a higher `z-index` than
-the header's), so it's never hidden when it's reached. Stylesheets, meta tags and scripts go inside `<head>`
-through `{% raw %}{% block head %}{% endraw %}`: fill it in that layout page, not in
-`base.html`, so the 500 page (which uses the bare `base.html`) never depends on them. A
-page that extends your layout and adds its own `<head>` tags must start its block with
-`{% raw %}{{ block.super }}{% endraw %}`; without it, the page replaces the layout's
-tags (its stylesheets and theme) instead of adding to them:
-
-```html
-{% raw %}{% extends "layout.html" %}{% load static %}
-{% block head %}{{ block.super }}<script src="{% static 'map.js' %}" defer></script>{% endblock %}{% endraw %}
-```
+They extend the bare `templates/base.html`, never `layout.html` (see
+[Page layout](#page-layout)): Django shows the 500 page when the request, the user or
+the database may be what failed, so it can't depend on anything that needs them.
 
 To see the 400, 404 and 500 pages in development:
 
@@ -1101,7 +1123,7 @@ are done, and the site's features come as Django apps plugged into it.
 - **The app (Django, served by Gunicorn):** `config/` wires it together: settings by
   topic in `config/settings/`, the URL map in `config/urls.py`, health checks, logging
   and private uploads. `accounts/` holds the custom `User` model. `templates/` has the
-  base page and the error pages.
+  bare base page, the site's layout and the error pages.
 - **PostgreSQL** keeps the data, **Redis** is the cache, and the **worker** runs
   background jobs that the app stores in the database (Django's Tasks API).
 - **Caddy**, in production, is the only part the internet reaches: HTTPS, rate limits,
@@ -1131,7 +1153,8 @@ by itself.
    cached image layer.
 2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
    at the top.
-3. Include its URLs in `config/urls.py`, e.g.
+3. Include its URLs in `config/urls.py` (and change its import to
+   `from django.urls import include, path`), e.g.
    `path("billing/", include("billing.urls"))`.
 4. Put any settings it needs in the topic file they belong to (or a new one, added to
    `config/settings/__init__.py` and `TOPICS` in `tests/test_settings_package.py`),
@@ -1139,12 +1162,13 @@ by itself.
 5. Run `uv run python manage.py migrate` (production's `migrate` step does this by
    itself), then `uv run pytest`.
 
-What a plugged-in app gets from the shell, and should use: templates extend
-`base.html` and add stylesheets, meta tags and scripts inside `<head>` with
-`{% raw %}{% block head %}{% endraw %}` (starting with `{% raw %}{{ block.super }}{% endraw %}` when extending
-a page that already fills it); an app's tags that read the database (a theme app's,
-say) go in a layout page that extends `base.html`, never in `base.html` itself (see
-Error pages); inline scripts and styles need `nonce="{% raw %}{{ csp_nonce }}{% endraw %}"` (see
+6. If its README gives a line for `layout.html` (a theme, an app shell), add it there
+   (see [Page layout](#page-layout)).
+
+What a plugged-in app gets from the shell, and should use: its pages extend
+`layout.html` and fill only `title`, `head` (starting with
+`{% raw %}{{ block.super }}{% endraw %}`) and `content`, and Django's messages show in
+the layout's `role="status"` region (see [Page layout](#page-layout)); inline scripts and styles need `nonce="{% raw %}{{ csp_nonce }}{% endraw %}"` (see
 Security); users are `settings.AUTH_USER_MODEL`; uploads are private unless stored with
 `public_storage`, and `can_download()` decides who gets them (see Uploaded files);
 slow work goes to a background job with the Tasks API (see Background jobs); email
@@ -1166,7 +1190,7 @@ goes through `django.core.mail` (see Email).
 | `config/login_limits.py` | Login rate limiting's own parts: the visitor's address (a proxy's header only when `DJANGO_BEHIND_PROXY` is on, IPv6 per /64) and the per-address limit |
 | `config/wsgi.py`, `config/asgi.py` | Entry points the production server starts from |
 | `accounts/` | The custom `User` model: unique lowercase email, `public_id` UUID |
-| `templates/` | Project-wide templates: `base.html`, the error pages (`400`, `403`, `403_csrf`, `404`, `500`) and `proxy_error.html` for the reverse proxy |
+| `templates/` | Project-wide templates: `base.html` (the bare page), `layout.html` (the site's layout, which pages and apps extend; yours to edit), the error pages (`400`, `403`, `403_csrf`, `404`, `500`) and `proxy_error.html` for the reverse proxy |
 | `static/` | The site's own static files (`STATICFILES_DIRS`): `site.css`, loaded by `base.html` on every page (it hides the skip link until it's focused). Add the site's own CSS, JavaScript and images here |
 | `tests/test_healthz.py` | Proves `/healthz` answers any host without the database |
 | `tests/test_error_pages.py` | Proves each error (400, 403, failed form check, 404, 500) shows the site's page without internal details, a failed form check gives its reason only with debug on, a crash shows the 500 page with the database and Redis down, pages always have a title, no page has code the CSP would block, and the proxy's page loads nothing |
@@ -1209,7 +1233,8 @@ goes through `django.core.mail` (see Email).
 
 ## Conventions
 
-- Project-wide templates (`base.html`, the error pages) live in the root `templates/`;
-  each app keeps its own in `<app>/templates/<app>/`.
+- Project-wide templates (`base.html`, `layout.html`, the error pages) live in the root
+  `templates/`; each app keeps its own in `<app>/templates/<app>/`, and its pages
+  extend `layout.html`.
 - Models expose `public_id` (a UUID) in URLs and APIs, never the database `id`.
 - Business logic lives in plain functions (`services.py`, `selectors.py`) that views and APIs share.

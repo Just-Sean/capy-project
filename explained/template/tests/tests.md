@@ -37,6 +37,7 @@
 | `test_logs.py` | Log formats, for Django and Gunicorn |
 | `test_csp_report.py` | The CSP report view |
 | `test_error_pages.py` | The error pages |
+| `test_layout.py` | `layout.html`: what a page fills in, the messages region, error pages on `base.html` |
 | `test_deprecation_warnings.py` | Deprecations fail the tests |
 | `test_migrations.py` | No missing migrations |
 
