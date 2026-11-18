@@ -1153,13 +1153,8 @@ by itself.
 1. Install it (`uv add the-package`), or from a Git repository at a released tag
    (`uv add git+https://github.com/owner/the-app --tag v1.0.0`), or put its folder at
    the top of the project. The production image installs Git apps too (its build stage
-   has `git`). A **private** repository needs a login while the image builds: never put
-   a token in the URL, `pyproject.toml` or the Dockerfile, where it would end up in git
-   or the image; pass it as a Docker build secret instead (Docker's "Build secrets"
-   docs, `RUN --mount=type=secret`). Give git the token only inside the same `RUN` as
-   `uv sync`, for example through `GIT_CONFIG_*` environment variables read from the
-   secret; never with `git config` in a step of its own, which saves the token in a
-   cached image layer.
+   has `git`). A **private** repository needs a login while the image builds: see
+   [Apps from a private repository](#apps-from-a-private-repository).
 2. Add it to `INSTALLED_APPS` in `config/settings/core.py`, in the "your apps" part
    at the top.
 3. Include its URLs in `config/urls.py` (adding `include` to its
@@ -1182,6 +1177,71 @@ Security); users are `settings.AUTH_USER_MODEL`; uploads are private unless stor
 `public_storage`, and `can_download()` decides who gets them (see Uploaded files);
 slow work goes to a background job with the Tasks API (see Background jobs); email
 goes through `django.core.mail` (see Email).
+
+### Apps from a private repository
+
+The production image is built on the server, and git needs a login there to fetch a
+private app. It gets one as a Docker **build secret**: a file on the server that the
+build reads while it runs, and that never ends up in the image, its history or git.
+Never put a token in a URL, `pyproject.toml`, `uv.lock` or the Dockerfile.
+
+1. **Make a token** on GitHub (Settings > Developer settings > Fine-grained tokens):
+   only the repositories the project installs, "Contents: Read-only" and nothing else,
+   and an expiry date (put a reminder in your calendar to renew it).
+2. **Save it on the server**, next to `compose.prod.yaml`, readable only by you. Its
+   name starts with `.env`, so git and the image's `.dockerignore` both leave it out:
+
+   ```bash
+   (umask 077 && read -rsp "Token: " t && printf '%s' "$t" > .env.git-token)
+   ```
+
+3. **In `Dockerfile`**, replace the `uv sync` step with this one, changing
+   `your-account` (twice) to the GitHub account or organization the apps come from.
+   Git gets the token only inside this one step, and only for that account's
+   repositories; `required=true` stops the build with a clear error if the file is
+   missing:
+
+   ```dockerfile
+   RUN --mount=type=cache,target=/root/.cache/uv \
+       --mount=type=secret,id=git_token,required=true \
+       GIT_CONFIG_COUNT=1 \
+       GIT_CONFIG_KEY_0="url.https://x-access-token:$(cat /run/secrets/git_token)@github.com/your-account/.insteadOf" \
+       GIT_CONFIG_VALUE_0="https://github.com/your-account/" \
+       uv sync --locked --no-dev --no-install-project
+   ```
+
+   Never give git the token in a step of its own (`git config` in a `RUN`, `ARG`,
+   `ENV`): those are saved in the image (`tests/test_dockerfile.py` refuses `ARG`).
+4. **In `compose.prod.yaml`**, the app's build reads the secret. In the `x-app` block,
+   replace `build: .` with:
+
+   ```yaml
+     build:
+       context: .
+       secrets: [git_token]
+   ```
+
+   and add, at the end of the file:
+
+   ```yaml
+   secrets:
+     git_token:
+       file: ./.env.git-token
+   ```
+
+5. **Deploy** as usual (`docker compose -f compose.yaml -f compose.prod.yaml up --build -d --wait`).
+   To check the token is nowhere in the image, in its history or its files (both
+   print nothing; the second reads the token from the file, so it never appears on a
+   command line, and searches every folder except the system's live ones):
+
+   ```bash
+   docker history --no-trunc {{ project_slug }}-web | grep -F -f .env.git-token
+   docker run --rm -i --user root --entrypoint sh {{ project_slug }}-web -c 'IFS= read -r t || [ -n "$t" ]; grep -rlF -e "$t" /app /etc /home /opt /root /srv /tmp /usr /var' < .env.git-token
+   ```
+
+On your own machine, `uv add`, `uv lock` and `uv sync` fetch the app with your own git
+login: with GitHub's `gh` tool, run `gh auth setup-git` once. When the token expires,
+make a new one and save it the same way (step 2), then deploy.
 
 ## What's in the project
 

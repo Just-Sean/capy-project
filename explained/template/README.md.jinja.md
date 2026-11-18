@@ -20,7 +20,7 @@
 | Checking what's running | `ps`, `down`, `down -v` and what each deletes |
 | Security | Argon2, login rate limiting, headers, the CSP and its nonce, HSTS preload |
 | Checks | pre-commit, gitleaks scans, and before every pull request: `pytest --cov` and pip-audit |
-| Architecture | The main parts, a request's path, why each choice was made, and **Adding a reusable app** in six steps |
+| Architecture | The main parts, a request's path, why each choice was made, **Adding a reusable app** in six steps, and **Apps from a private repository** (a read-only token as a Docker build secret: the `Dockerfile` and `compose.prod.yaml` changes to paste in, and how to check the token isn't in the image) |
 | What's in the project | A table of every file and what each test proves |
 | Conventions | Templates, `public_id`, business logic in plain functions |
 
