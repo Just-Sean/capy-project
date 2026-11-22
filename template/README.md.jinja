@@ -24,6 +24,29 @@ Then open http://localhost:8000/admin/ and log in.
 The first commit includes `uv.lock`: it pins every package version so everyone, and
 the production image, installs exactly the same thing. Commit it whenever it changes.
 
+## Set up the GitHub repo and protect `main`
+
+Push the project to GitHub and protect `main`, so changes land only through
+CI-checked pull requests and nothing (no agent, no stray command) writes to `main`
+directly. This matters most when several agents work in parallel.
+
+```bash
+gh repo create <owner>/<name> --private --source . --push   # or create it on github.com and push
+```
+
+Then, in **Settings → Rules → Rulesets**, add a ruleset on the default branch that
+**requires a pull request**, **requires the CI checks to pass**, and **blocks
+force-pushes**. GitHub lists the check names to pick only after CI has run once, so open
+your first pull request, then come back. Also turn on Dependabot alerts and security
+updates under **Settings → Code security**.
+
+A one-command shortcut for the ruleset is `protect-main.sh` (a small helper kept in
+`~/bin`): `protect-main.sh <owner>/<name>` — run it now, and again after your first pull
+request has run CI so it can require those checks by name.
+
+In a new worktree for a parallel agent (`claude -w <name>`), run `scripts/wt-env.sh`
+first — it gives the worktree its own virtualenv and dev-server port.
+
 ## Everyday commands
 
 | Command | What it does |
